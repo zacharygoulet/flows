@@ -3,6 +3,7 @@ mod flow;
 mod global;
 mod instance;
 mod name;
+pub mod output;
 mod storage;
 
 pub use flow::{Flow, State, StateName};

@@ -84,6 +84,10 @@ impl InstanceSavePolicy {
 }
 
 impl Instance {
+    pub fn status(&self) -> String {
+        format!("{}", crate::output::InstanceStatus(self))
+    }
+
     pub fn new(name: InstanceName, flow: Flow) -> Self {
         flow.validate();
         let state = flow.initial_state().clone();

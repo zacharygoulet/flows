@@ -1,9 +1,7 @@
-mod output;
-
 use clap::{Parser, Subcommand};
 use flows::{
     Autonomy, ContextUpdate, Flow, FlowName, Instance, InstanceName, InstanceSavePolicy, Move, Scope,
-    StateName, Storage,
+    StateName, Storage, output,
 };
 use rust_utils::raise::RaiseExt;
 use uuid::Uuid;
@@ -154,6 +152,7 @@ fn run(cli: Cli) {
         Cli::Resume { instance_name, owner } => {
             Instance::load_from_name(instance_name.as_str()).claim(owner);
             println!("instance {instance_name} claimed");
+            print!("{}", Instance::load_from_name(instance_name.as_str()).status());
         }
         Cli::Pause { instance_name } => {
             Instance::load_from_name(instance_name.as_str()).release();
@@ -172,7 +171,10 @@ fn run(cli: Cli) {
             println!("completed instance {instance_name}");
         }
         Cli::NewFlowFromTemplate { flow_name, global } => create_flow_from_template(flow_name, global),
-        Cli::Status { instance_name: Some(instance_name) } => status_instance(instance_name),
+        Cli::Status { instance_name: Some(instance_name) } => {
+            let instance = Instance::load_from_name(instance_name.as_str());
+            print!("{}", instance.status());
+        }
         Cli::Status { instance_name: None } => status_all(),
         Cli::List { target } => list(target),
         Cli::Context { action } => change_context(action),
@@ -199,17 +201,13 @@ fn start(
     }
     let path = instance.save_new(InstanceSavePolicy::from_cli_args(global, copy_flow));
     println!("{}", output::created_instance(&instance, &path));
+    print!("{}", instance.status());
 }
 
 fn create_flow_from_template(flow_name: FlowName, global: bool) {
     let scope = if global { Scope::Global } else { Scope::Local };
     let path = Flow::create_from_template(flow_name.clone(), FLOW_TEMPLATE, scope);
     println!("{}", output::created_flow(&flow_name, &path));
-}
-
-fn status_instance(instance_name: InstanceName) {
-    let instance = Instance::load_from_name(instance_name.as_str());
-    print!("{}", output::InstanceStatus(&instance));
 }
 
 fn status_all() {
@@ -263,4 +261,5 @@ fn change_autonomy(action: AutonomyAction) {
 fn move_instance(instance_name: InstanceName, movement: Move) {
     let instance = Instance::load_from_name(instance_name.as_str()).move_to(movement);
     println!("{}", output::moved_instance(&instance));
+    print!("{}", instance.status());
 }
