@@ -152,6 +152,7 @@ fn run(cli: Cli) {
         Cli::Resume { instance_name, owner } => {
             Instance::load_from_name(instance_name.as_str()).claim(owner);
             println!("instance {instance_name} claimed");
+            println!();
             print!("{}", Instance::load_from_name(instance_name.as_str()).status());
         }
         Cli::Pause { instance_name } => {
@@ -201,6 +202,7 @@ fn start(
     }
     let path = instance.save_new(InstanceSavePolicy::from_cli_args(global, copy_flow));
     println!("{}", output::created_instance(&instance, &path));
+    println!();
     print!("{}", instance.status());
 }
 
@@ -261,5 +263,6 @@ fn change_autonomy(action: AutonomyAction) {
 fn move_instance(instance_name: InstanceName, movement: Move) {
     let instance = Instance::load_from_name(instance_name.as_str()).move_to(movement);
     println!("{}", output::moved_instance(&instance));
+    println!();
     print!("{}", instance.status());
 }
