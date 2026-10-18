@@ -131,6 +131,7 @@ fn help_explains_flow_then_lists_clap_commands() {
         "context",
         "rename",
         "autonomy",
+        "state-overrides",
         "new-flow-from-template",
     ] {
         assert!(text.contains(command), "{text}");
@@ -157,6 +158,55 @@ fn help_for_command_shows_clap_generated_arguments() {
         "{text}"
     );
     assert!(text.contains("guided, steered, or autonomous"), "{text}");
+}
+
+#[test]
+fn state_overrides_help_shows_nested_commands() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for (args, usage) in [
+        (
+            &["help", "state-overrides", "initial"][..],
+            "Usage: flows state-overrides initial <INSTANCE_NAME> <STATE>",
+        ),
+        (
+            &["help", "state-overrides", "final", "add"],
+            "Usage: flows state-overrides final add <INSTANCE_NAME> <STATE>",
+        ),
+        (
+            &["help", "state-overrides", "final", "remove"],
+            "Usage: flows state-overrides final remove <INSTANCE_NAME> <STATE>",
+        ),
+        (
+            &["help", "state-overrides", "skip"],
+            "Usage: flows state-overrides skip <INSTANCE_NAME> <STATE>",
+        ),
+        (
+            &["help", "state-overrides", "unskip"],
+            "Usage: flows state-overrides unskip <INSTANCE_NAME> <STATE>",
+        ),
+    ] {
+        let output = run_cli(root, args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(usage),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    let top_level = String::from_utf8(run_cli(root, &["help"]).stdout).unwrap();
+    for old in ["initial", "final", "skip", "unskip"] {
+        assert!(
+            !top_level
+                .lines()
+                .any(|line| line.trim_start().starts_with(&format!("{old} "))),
+            "{top_level}"
+        );
+    }
 }
 
 #[test]
@@ -1206,7 +1256,14 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
     .unwrap();
     let path = root.join(".flows/instances/run.toml");
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    for args in [&["skip", "run", "A"][..], &["skip", "run", "B"]] {
+    assert!(
+        !fs::read_to_string(&path).unwrap().contains("[state_overrides]"),
+        "empty overrides should not be serialized"
+    );
+    for args in [
+        &["state-overrides", "skip", "run", "A"][..],
+        &["state-overrides", "skip", "run", "B"],
+    ] {
         let result = run_cli(root, args);
         assert!(
             result.status.success(),
@@ -1214,6 +1271,9 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
             String::from_utf8_lossy(&result.stderr)
         );
     }
+    let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["state_overrides"]["skipped"].as_array().unwrap().len(), 2);
+    assert!(saved.get("skipped").is_none(), "{saved}");
     let status = run_cli(root, &["status", "run"]);
     let text = String::from_utf8_lossy(&status.stdout);
     assert!(text.contains("Next states:\n  - Finish\n"), "{text}");
@@ -1231,48 +1291,87 @@ fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouc
     write_movable_flow(&root.join(".flows/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     let path = root.join(".flows/instances/run.toml");
-    assert!(run_cli(root, &["initial", "run", "Review"]).status.success());
-    let contents = fs::read_to_string(&path).unwrap();
-    assert!(contents.contains("initial_state = \"Review\""), "{contents}");
-    assert!(contents.contains("state = \"Review\""), "{contents}");
-    assert!(run_cli(root, &["jump", "run", "Design"]).status.success());
-    assert!(run_cli(root, &["initial", "run", "Review"]).status.success());
-    assert!(run_cli(root, &["final", "add", "run", "Review"]).status.success());
-    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
-    assert!(!status.contains("Next states:"), "{status}");
     assert!(
-        run_cli(root, &["final", "remove", "run", "Review"])
+        run_cli(root, &["state-overrides", "initial", "run", "Review"])
             .status
             .success()
     );
-    assert!(run_cli(root, &["initial", "run", "Design"]).status.success());
     let contents = fs::read_to_string(&path).unwrap();
-    assert!(!contents.contains("initial_state"), "{contents}");
-    assert!(!contents.contains("final_states"), "{contents}");
+    let saved: toml::Value = toml::from_str(&contents).unwrap();
+    assert_eq!(saved["state_overrides"]["initial"].as_str(), Some("Review"));
+    assert!(saved.get("initial").is_none(), "{contents}");
+    assert_eq!(saved["state"].as_str(), Some("Review"));
+    assert!(run_cli(root, &["jump", "run", "Design"]).status.success());
+    assert!(
+        run_cli(root, &["state-overrides", "initial", "run", "Review"])
+            .status
+            .success()
+    );
+    assert!(
+        run_cli(root, &["state-overrides", "final", "add", "run", "Review"])
+            .status
+            .success()
+    );
+    let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        saved["state_overrides"]["finals"].as_array().unwrap()[0].as_str(),
+        Some("Review")
+    );
+    assert!(saved.get("finals").is_none(), "{saved}");
+    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
+    assert!(!status.contains("Next states:"), "{status}");
+    assert!(
+        run_cli(root, &["state-overrides", "final", "remove", "run", "Review"])
+            .status
+            .success()
+    );
+    assert!(
+        run_cli(root, &["state-overrides", "initial", "run", "Design"])
+            .status
+            .success()
+    );
+    let contents = fs::read_to_string(&path).unwrap();
+    assert!(!contents.contains("[state_overrides]"), "{contents}");
     for args in [
-        &["skip", "run", "Design"][..],
-        &["skip", "run", "Missing"],
-        &["initial", "run", "Missing"],
-        &["final", "remove", "run", "Review"],
-        &["unskip", "run", "Review"],
+        &["state-overrides", "skip", "run", "Design"][..],
+        &["state-overrides", "skip", "run", "Missing"],
+        &["state-overrides", "initial", "run", "Missing"],
+        &["state-overrides", "final", "remove", "run", "Review"],
+        &["state-overrides", "unskip", "run", "Review"],
     ] {
         let before = fs::read(&path).unwrap();
         assert!(!run_cli(root, args).status.success(), "{args:?}");
         assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
     }
-    assert!(run_cli(root, &["final", "add", "run", "Review"]).status.success());
-    let before = fs::read(&path).unwrap();
-    assert!(!run_cli(root, &["skip", "run", "Review"]).status.success());
-    assert_eq!(fs::read(&path).unwrap(), before);
     assert!(
-        run_cli(root, &["final", "remove", "run", "Review"])
+        run_cli(root, &["state-overrides", "final", "add", "run", "Review"])
             .status
             .success()
     );
     let before = fs::read(&path).unwrap();
-    assert!(!run_cli(root, &["skip", "run", "Review"]).status.success());
+    assert!(
+        !run_cli(root, &["state-overrides", "skip", "run", "Review"])
+            .status
+            .success()
+    );
     assert_eq!(fs::read(&path).unwrap(), before);
-    assert!(run_cli(root, &["initial", "run", "Review"]).status.success());
+    assert!(
+        run_cli(root, &["state-overrides", "final", "remove", "run", "Review"])
+            .status
+            .success()
+    );
+    let before = fs::read(&path).unwrap();
+    assert!(
+        !run_cli(root, &["state-overrides", "skip", "run", "Review"])
+            .status
+            .success()
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(
+        run_cli(root, &["state-overrides", "initial", "run", "Review"])
+            .status
+            .success()
+    );
 }
 
 #[test]
@@ -1281,7 +1380,11 @@ fn custom_final_allows_completion_despite_flow_transitions() {
     let root = directory.path();
     write_movable_flow(&root.join(".flows/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    assert!(run_cli(root, &["final", "add", "run", "Design"]).status.success());
+    assert!(
+        run_cli(root, &["state-overrides", "final", "add", "run", "Design"])
+            .status
+            .success()
+    );
     assert!(run_cli(root, &["complete", "run"]).status.success());
     assert!(!root.join(".flows/instances/run.toml").exists());
 }
@@ -1298,11 +1401,64 @@ fn skipped_cycle_does_not_make_a_nonfinal_state_completable() {
     )
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    assert!(run_cli(root, &["skip", "run", "Loop"]).status.success());
+    assert!(
+        run_cli(root, &["state-overrides", "skip", "run", "Loop"])
+            .status
+            .success()
+    );
     let path = root.join(".flows/instances/run.toml");
     let before = fs::read(&path).unwrap();
     assert!(!run_cli(root, &["complete", "run"]).status.success());
     assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn old_instance_without_overrides_loads_and_nested_overrides_round_trip() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let flow = root.join(".flows/workflow.toml");
+    fs::create_dir_all(flow.parent().unwrap()).unwrap();
+    fs::write(&flow, "initial_state = 'Design'\n[[states]]\nname = 'Design'\nnext = ['Review']\n[[states]]\nname = 'Review'\nnext = ['Done']\n[[states]]\nname = 'Done'\n").unwrap();
+    let path = root.join(".flows/instances/run.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n").unwrap();
+    assert!(run_cli(root, &["status", "run"]).status.success());
+    assert!(
+        run_cli(root, &["resume", "run", "--owner", "operator"])
+            .status
+            .success()
+    );
+    assert!(!fs::read_to_string(&path).unwrap().contains("[state_overrides]"));
+    fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n[state_overrides]\ninitial = 'Done'\nfinals = ['Design']\nskipped = ['Review']\n").unwrap();
+    assert!(run_cli(root, &["status", "run"]).status.success());
+    assert!(
+        run_cli(root, &["state-overrides", "initial", "run", "Done"])
+            .status
+            .success()
+    );
+    let contents = fs::read_to_string(&path).unwrap();
+    let saved: toml::Value = toml::from_str(&contents).unwrap();
+    assert_eq!(
+        saved["state_overrides"]["skipped"].as_array().unwrap()[0].as_str(),
+        Some("Review")
+    );
+    assert!(
+        run_cli(root, &["state-overrides", "unskip", "run", "Review"])
+            .status
+            .success()
+    );
+    let contents = fs::read_to_string(&path).unwrap();
+    let saved: toml::Value = toml::from_str(&contents).unwrap();
+    assert_eq!(saved["state_overrides"]["initial"].as_str(), Some("Done"));
+    assert_eq!(
+        saved["state_overrides"]["finals"].as_array().unwrap()[0].as_str(),
+        Some("Design")
+    );
+    assert!(saved["state_overrides"].get("skipped").is_none(), "{contents}");
+    assert!(
+        saved.get("initial").is_none() && saved.get("finals").is_none(),
+        "{contents}"
+    );
 }
 
 #[test]
@@ -1313,19 +1469,23 @@ fn invalid_persisted_instance_configuration_is_rejected_on_load() {
     let path = root.join(".flows/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     for extra in [
-        "initial_state = 'Missing'\n",
-        "final_states = ['Missing']\n",
-        "skipped_states = ['Missing']\n",
-        "skipped_states = ['Design']\n",
-        "skipped_states = ['Review']\n",
-        "skipped_states = ['Review']\nfinal_states = ['Review']\n",
+        "initial = 'Missing'\n",
+        "finals = ['Missing']\n",
+        "skipped = ['Missing']\n",
+        "skipped = ['Design']\n",
+        "skipped = ['Review']\n",
+        "skipped = ['Review']\nfinals = ['Review']\n",
     ] {
-        fs::write(&path, format!("flow = 'workflow'\nstate = 'Design'\n{extra}")).unwrap();
+        fs::write(
+            &path,
+            format!("flow = 'workflow'\nstate = 'Design'\n[state_overrides]\n{extra}"),
+        )
+        .unwrap();
         let output = run_cli(root, &["status", "run"]);
         assert!(!output.status.success(), "{extra}");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            format!("flow = 'workflow'\nstate = 'Design'\n{extra}")
+            format!("flow = 'workflow'\nstate = 'Design'\n[state_overrides]\n{extra}")
         );
     }
 }

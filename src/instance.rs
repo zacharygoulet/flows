@@ -20,18 +20,30 @@ pub struct Instance {
     #[serde(deserialize_with = "load_flow", serialize_with = "save_flow_name")]
     flow: Flow,
     state: StateName,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    initial_state: Option<StateName>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    final_states: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    skipped_states: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "StateOverrides::is_empty")]
+    state_overrides: StateOverrides,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     context: BTreeMap<String, String>,
     #[serde(default)]
     autonomy: BTreeMap<String, Autonomy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct StateOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    initial: Option<StateName>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    finals: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    skipped: BTreeSet<String>,
+}
+
+impl StateOverrides {
+    fn is_empty(&self) -> bool {
+        self.initial.is_none() && self.finals.is_empty() && self.skipped.is_empty()
+    }
 }
 
 #[derive(
@@ -106,9 +118,7 @@ impl Instance {
             name,
             flow,
             state,
-            initial_state: None,
-            final_states: BTreeSet::new(),
-            skipped_states: BTreeSet::new(),
+            state_overrides: StateOverrides::default(),
             context: BTreeMap::new(),
             autonomy,
             owner: None,
@@ -118,13 +128,15 @@ impl Instance {
     }
 
     pub fn configured_initial(&self) -> &StateName {
-        self.initial_state
+        self.state_overrides
+            .initial
             .as_ref()
             .unwrap_or_else(|| self.flow.initial_state())
     }
 
     fn is_final(&self, name: &str) -> bool {
-        self.final_states.contains(name) || self.find_state(name).is_some_and(|state| state.next.is_empty())
+        self.state_overrides.finals.contains(name)
+            || self.find_state(name).is_some_and(|state| state.next.is_empty())
     }
 
     pub fn effective_next(&self) -> Vec<&State> {
@@ -147,8 +159,8 @@ impl Instance {
             return;
         }
         let state = self.find_state(name).expect("flow transitions were validated");
-        if self.skipped_states.contains(name) {
-            if !self.final_states.contains(name) {
+        if self.state_overrides.skipped.contains(name) {
+            if !self.state_overrides.finals.contains(name) {
                 for next in &state.next {
                     self.expand_next(&next.0, visited, result);
                 }
@@ -170,28 +182,28 @@ impl Instance {
 
     pub fn set_initial(mut self, name: String) -> Self {
         self.require_state(&name);
-        if self.skipped_states.contains(&name) {
+        if self.state_overrides.skipped.contains(&name) {
             raise::raise(format!("cannot set skipped state {name:?} as initial"));
         }
         self.state = StateName(name.clone());
-        self.initial_state = (name != self.flow.initial_state().0).then_some(StateName(name));
+        self.state_overrides.initial = (name != self.flow.initial_state().0).then_some(StateName(name));
         self.save_existing();
         self
     }
 
     pub fn add_final(mut self, name: String) -> Self {
         self.require_state(&name);
-        if self.skipped_states.contains(&name) {
+        if self.state_overrides.skipped.contains(&name) {
             raise::raise(format!("cannot make skipped state {name:?} final"));
         }
-        self.final_states.insert(name);
+        self.state_overrides.finals.insert(name);
         self.save_existing();
         self
     }
 
     pub fn remove_final(mut self, name: &str) -> Self {
         self.require_state(name);
-        if !self.final_states.remove(name) {
+        if !self.state_overrides.finals.remove(name) {
             raise::raise(format!("state {name:?} is not a custom final state"));
         }
         self.save_existing();
@@ -203,14 +215,14 @@ impl Instance {
         if name == self.state.0 || name == self.configured_initial().0 || self.is_final(&name) {
             raise::raise(format!("cannot skip current, initial, or final state {name:?}"));
         }
-        self.skipped_states.insert(name);
+        self.state_overrides.skipped.insert(name);
         self.save_existing();
         self
     }
 
     pub fn unskip(mut self, name: &str) -> Self {
         self.require_state(name);
-        if !self.skipped_states.remove(name) {
+        if !self.state_overrides.skipped.remove(name) {
             raise::raise(format!("state {name:?} is not skipped"));
         }
         self.save_existing();
@@ -232,7 +244,7 @@ impl Instance {
             }
             Move::JumpTo(target) => {
                 self.require_state(&target.0);
-                if self.skipped_states.contains(&target.0) {
+                if self.state_overrides.skipped.contains(&target.0) {
                     raise::raise(format!("cannot jump to skipped state {:?}", target.0));
                 }
                 target
@@ -410,10 +422,10 @@ impl Instance {
 
     fn validate_configuration(&self) {
         self.require_state(&self.configured_initial().0);
-        for name in &self.final_states {
+        for name in &self.state_overrides.finals {
             self.require_state(name);
         }
-        for name in &self.skipped_states {
+        for name in &self.state_overrides.skipped {
             self.require_state(name);
             if name == &self.state.0 || name == &self.configured_initial().0 || self.is_final(name) {
                 raise::raise(format!(
@@ -641,7 +653,7 @@ mod tests {
                 ],
             ),
         );
-        instance.skipped_states.extend(["A".into(), "B".into()]);
+        instance.state_overrides.skipped.extend(["A".into(), "B".into()]);
         assert_eq!(
             instance
                 .effective_next()
@@ -674,7 +686,7 @@ mod tests {
                 ],
             ),
         );
-        instance.skipped_states.insert("Loop".into());
+        instance.state_overrides.skipped.insert("Loop".into());
         assert_eq!(instance.effective_next()[0].name, "Start");
         instance.apply_move(Move::Next(StateName("Start".into())));
     }
@@ -692,7 +704,7 @@ mod tests {
                 ],
             ),
         );
-        instance.skipped_states.insert("Loop".into());
+        instance.state_overrides.skipped.insert("Loop".into());
         assert!(instance.effective_next().is_empty());
         assert!(!instance.is_final("Start"));
     }
@@ -700,9 +712,9 @@ mod tests {
     #[test]
     fn custom_final_truncates_transitions_and_default_terminal_remains_terminal() {
         let mut instance = instance_with_transitions();
-        instance.final_states.insert("Draft".into());
+        instance.state_overrides.finals.insert("Draft".into());
         assert!(instance.effective_next().is_empty());
-        instance.final_states.clear();
+        instance.state_overrides.finals.clear();
         assert_eq!(instance.effective_next()[0].name, "Review");
         instance.apply_move(Move::JumpTo(StateName("Done".into())));
         assert!(instance.effective_next().is_empty());

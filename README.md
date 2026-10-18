@@ -30,26 +30,5 @@ Use `flows stop` to delete an instance.
 Use `flows complete <name>` to delete an instance after it reaches a state with no available next transitions.
 Use `flows help <command>` for a command's arguments and options.
 
-## Tailor an instance
-
-The flow definition stays unchanged when you tailor one instance. For example:
-
-```sh
-flows start workflow my-task
-flows initial my-task Implement
-flows final add my-task Test
-flows skip my-task 'Improve and Clean'
-flows status my-task
-flows next my-task Test
-flows complete my-task
-```
-
-Changing the initial state also moves the instance to that state. `flows final add`
-marks an additional completion point; a configured final has no available next states,
-even if its flow definition lists transitions. The flow's original terminal states
-remain available. Use `flows final remove INSTANCE STATE` to remove an added final.
-
-`flows skip INSTANCE STATE` records a skipped state for that instance. Normal `next`
-transitions and the status hint bypass skipped states, including consecutive skips.
-Use `flows unskip INSTANCE STATE` to restore a state. The current, initial, and
-final states (configured or flow-defined) cannot be skipped.
+An instance can change its initial state, add final states, or skip states without
+changing its flow. See `flows state-overrides --help`.

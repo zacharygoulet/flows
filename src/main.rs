@@ -62,28 +62,10 @@ enum Cli {
         target: String,
     },
 
-    /// Set an instance's initial state and reset its current state.
-    Initial {
-        instance_name: InstanceName,
-        state: String,
-    },
-
-    /// Manage additional final states for an instance.
-    Final {
+    /// Configure initial, final, and skipped states for an instance.
+    StateOverrides {
         #[command(subcommand)]
-        action: FinalAction,
-    },
-
-    /// Bypass a state on normal next transitions.
-    Skip {
-        instance_name: InstanceName,
-        state: String,
-    },
-
-    /// Restore a skipped state to normal next transitions.
-    Unskip {
-        instance_name: InstanceName,
-        state: String,
+        action: StateOverridesAction,
     },
 
     /// Jump to any unskipped defined state, including exceptional moves.
@@ -124,6 +106,30 @@ enum Cli {
         flow_name: FlowName,
         #[arg(short, long)]
         global: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum StateOverridesAction {
+    /// Set an instance's initial state and reset its current state.
+    Initial {
+        instance_name: InstanceName,
+        state: String,
+    },
+    /// Manage additional final states for an instance.
+    Final {
+        #[command(subcommand)]
+        action: FinalAction,
+    },
+    /// Bypass a state on normal next transitions.
+    Skip {
+        instance_name: InstanceName,
+        state: String,
+    },
+    /// Restore a skipped state to normal next transitions.
+    Unskip {
+        instance_name: InstanceName,
+        state: String,
     },
 }
 
@@ -218,24 +224,7 @@ fn run(cli: Cli) {
         Cli::List { target } => list(target),
         Cli::Context { action } => change_context(action),
         Cli::Autonomy { action } => change_autonomy(action),
-        Cli::Initial { instance_name, state } => {
-            let instance = Instance::load_from_name(instance_name.as_str()).set_initial(state);
-            print!("{}", instance.status());
-        }
-        Cli::Final { action } => match action {
-            FinalAction::Add { instance_name, state } => {
-                Instance::load_from_name(instance_name.as_str()).add_final(state);
-            }
-            FinalAction::Remove { instance_name, state } => {
-                Instance::load_from_name(instance_name.as_str()).remove_final(&state);
-            }
-        },
-        Cli::Skip { instance_name, state } => {
-            Instance::load_from_name(instance_name.as_str()).skip(state);
-        }
-        Cli::Unskip { instance_name, state } => {
-            Instance::load_from_name(instance_name.as_str()).unskip(&state);
-        }
+        Cli::StateOverrides { action } => change_state_overrides(action),
         Cli::Next { instance_name, target } => move_instance(instance_name, Move::Next(StateName(target))),
         Cli::Jump { instance_name, target } => move_instance(instance_name, Move::JumpTo(StateName(target))),
     }
@@ -286,6 +275,29 @@ fn list(target: Option<ListTarget>) {
                 .map(|name| Flow::load_from_name(name.as_str()))
                 .collect();
             print!("{}", output::FlowsTable(&flows));
+        }
+    }
+}
+
+fn change_state_overrides(action: StateOverridesAction) {
+    match action {
+        StateOverridesAction::Initial { instance_name, state } => {
+            let instance = Instance::load_from_name(instance_name.as_str()).set_initial(state);
+            print!("{}", instance.status());
+        }
+        StateOverridesAction::Final { action } => match action {
+            FinalAction::Add { instance_name, state } => {
+                Instance::load_from_name(instance_name.as_str()).add_final(state);
+            }
+            FinalAction::Remove { instance_name, state } => {
+                Instance::load_from_name(instance_name.as_str()).remove_final(&state);
+            }
+        },
+        StateOverridesAction::Skip { instance_name, state } => {
+            Instance::load_from_name(instance_name.as_str()).skip(state);
+        }
+        StateOverridesAction::Unskip { instance_name, state } => {
+            Instance::load_from_name(instance_name.as_str()).unskip(&state);
         }
     }
 }
