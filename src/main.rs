@@ -62,7 +62,31 @@ enum Cli {
         target: String,
     },
 
-    /// Jump to any defined state, including exceptional moves.
+    /// Set an instance's initial state and reset its current state.
+    Initial {
+        instance_name: InstanceName,
+        state: String,
+    },
+
+    /// Manage additional final states for an instance.
+    Final {
+        #[command(subcommand)]
+        action: FinalAction,
+    },
+
+    /// Bypass a state on normal next transitions.
+    Skip {
+        instance_name: InstanceName,
+        state: String,
+    },
+
+    /// Restore a skipped state to normal next transitions.
+    Unskip {
+        instance_name: InstanceName,
+        state: String,
+    },
+
+    /// Jump to any unskipped defined state, including exceptional moves.
     Jump {
         /// Instance to move.
         instance_name: InstanceName,
@@ -100,6 +124,20 @@ enum Cli {
         flow_name: FlowName,
         #[arg(short, long)]
         global: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum FinalAction {
+    /// Add a custom final state.
+    Add {
+        instance_name: InstanceName,
+        state: String,
+    },
+    /// Remove a custom final state (flow terminal states remain terminal).
+    Remove {
+        instance_name: InstanceName,
+        state: String,
     },
 }
 
@@ -180,6 +218,24 @@ fn run(cli: Cli) {
         Cli::List { target } => list(target),
         Cli::Context { action } => change_context(action),
         Cli::Autonomy { action } => change_autonomy(action),
+        Cli::Initial { instance_name, state } => {
+            let instance = Instance::load_from_name(instance_name.as_str()).set_initial(state);
+            print!("{}", instance.status());
+        }
+        Cli::Final { action } => match action {
+            FinalAction::Add { instance_name, state } => {
+                Instance::load_from_name(instance_name.as_str()).add_final(state);
+            }
+            FinalAction::Remove { instance_name, state } => {
+                Instance::load_from_name(instance_name.as_str()).remove_final(&state);
+            }
+        },
+        Cli::Skip { instance_name, state } => {
+            Instance::load_from_name(instance_name.as_str()).skip(state);
+        }
+        Cli::Unskip { instance_name, state } => {
+            Instance::load_from_name(instance_name.as_str()).unskip(&state);
+        }
         Cli::Next { instance_name, target } => move_instance(instance_name, Move::Next(StateName(target))),
         Cli::Jump { instance_name, target } => move_instance(instance_name, Move::JumpTo(StateName(target))),
     }

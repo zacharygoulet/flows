@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -20,6 +20,12 @@ pub struct Instance {
     #[serde(deserialize_with = "load_flow", serialize_with = "save_flow_name")]
     flow: Flow,
     state: StateName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    initial_state: Option<StateName>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    final_states: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    skipped_states: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     context: BTreeMap<String, String>,
     #[serde(default)]
@@ -96,21 +102,125 @@ impl Instance {
             .iter()
             .map(|state| (state.name.clone(), Autonomy::Guided))
             .collect();
-        let instance = Self { name, flow, state, context: BTreeMap::new(), autonomy, owner: None };
+        let instance = Self {
+            name,
+            flow,
+            state,
+            initial_state: None,
+            final_states: BTreeSet::new(),
+            skipped_states: BTreeSet::new(),
+            context: BTreeMap::new(),
+            autonomy,
+            owner: None,
+        };
         instance.validate_current_state();
         instance
+    }
+
+    pub fn configured_initial(&self) -> &StateName {
+        self.initial_state
+            .as_ref()
+            .unwrap_or_else(|| self.flow.initial_state())
+    }
+
+    fn is_final(&self, name: &str) -> bool {
+        self.final_states.contains(name) || self.find_state(name).is_some_and(|state| state.next.is_empty())
+    }
+
+    pub fn effective_next(&self) -> Vec<&State> {
+        if self.is_final(&self.state.0) {
+            return Vec::new();
+        }
+        let current = self
+            .find_state(&self.state.0)
+            .expect("current state was validated");
+        let mut visited = HashSet::new();
+        let mut result = Vec::new();
+        for next in &current.next {
+            self.expand_next(&next.0, &mut visited, &mut result);
+        }
+        result
+    }
+
+    fn expand_next<'a>(&'a self, name: &str, visited: &mut HashSet<String>, result: &mut Vec<&'a State>) {
+        if !visited.insert(name.to_owned()) {
+            return;
+        }
+        let state = self.find_state(name).expect("flow transitions were validated");
+        if self.skipped_states.contains(name) {
+            if !self.final_states.contains(name) {
+                for next in &state.next {
+                    self.expand_next(&next.0, visited, result);
+                }
+            }
+        } else {
+            result.push(state);
+        }
+    }
+
+    fn find_state(&self, name: &str) -> Option<&State> {
+        self.flow.states().iter().find(|state| state.name == name)
+    }
+
+    fn require_state(&self, name: &str) {
+        if self.find_state(name).is_none() {
+            raise::raise(format!("unknown state {name:?} in flow {:?}", self.flow.name()));
+        }
+    }
+
+    pub fn set_initial(mut self, name: String) -> Self {
+        self.require_state(&name);
+        if self.skipped_states.contains(&name) {
+            raise::raise(format!("cannot set skipped state {name:?} as initial"));
+        }
+        self.state = StateName(name.clone());
+        self.initial_state = (name != self.flow.initial_state().0).then_some(StateName(name));
+        self.save_existing();
+        self
+    }
+
+    pub fn add_final(mut self, name: String) -> Self {
+        self.require_state(&name);
+        if self.skipped_states.contains(&name) {
+            raise::raise(format!("cannot make skipped state {name:?} final"));
+        }
+        self.final_states.insert(name);
+        self.save_existing();
+        self
+    }
+
+    pub fn remove_final(mut self, name: &str) -> Self {
+        self.require_state(name);
+        if !self.final_states.remove(name) {
+            raise::raise(format!("state {name:?} is not a custom final state"));
+        }
+        self.save_existing();
+        self
+    }
+
+    pub fn skip(mut self, name: String) -> Self {
+        self.require_state(&name);
+        if name == self.state.0 || name == self.configured_initial().0 || self.is_final(&name) {
+            raise::raise(format!("cannot skip current, initial, or final state {name:?}"));
+        }
+        self.skipped_states.insert(name);
+        self.save_existing();
+        self
+    }
+
+    pub fn unskip(mut self, name: &str) -> Self {
+        self.require_state(name);
+        if !self.skipped_states.remove(name) {
+            raise::raise(format!("state {name:?} is not skipped"));
+        }
+        self.save_existing();
+        self
     }
 
     pub fn apply_move(&mut self, movement: Move) {
         let target = match movement {
             Move::Next(target) => {
-                let current = self
-                    .flow
-                    .states()
-                    .iter()
-                    .find(|state| state.name == self.state.0)
-                    .expect("current state was validated");
-                if !current.next.iter().any(|next| next.0 == target.0) {
+                if !self.effective_next().iter().any(|next| next.name == target.0) {
                     raise::raise(format!(
                         "state {:?} cannot move next to {:?} in flow {:?}",
                         self.state.0,
@@ -121,12 +231,9 @@ impl Instance {
                 target
             }
             Move::JumpTo(target) => {
-                if !self.flow.states().iter().any(|state| state.name == target.0) {
-                    raise::raise(format!(
-                        "cannot move to unknown state {:?} in flow {:?}",
-                        target.0,
-                        self.flow.name()
-                    ));
+                self.require_state(&target.0);
+                if self.skipped_states.contains(&target.0) {
+                    raise::raise(format!("cannot jump to skipped state {:?}", target.0));
                 }
                 target
             }
@@ -184,13 +291,7 @@ impl Instance {
 
     pub fn complete_from_name(name: &str) {
         let instance = Self::load_from_name(name);
-        let current_state = instance
-            .flow
-            .states()
-            .iter()
-            .find(|state| state.name == instance.state.0)
-            .expect("current state was validated");
-        if !current_state.next.is_empty() {
+        if !instance.is_final(&instance.state.0) {
             raise::raise(format!(
                 "cannot complete instance {:?} in state {:?}: state has next transitions",
                 instance.name, instance.state.0
@@ -266,6 +367,7 @@ impl Instance {
         let mut instance = Self::deserialize_from_path(&path);
         instance.name = name;
         instance.validate_current_state();
+        instance.validate_configuration();
         for state in instance.flow.states() {
             instance.autonomy.entry(state.name.clone()).or_default();
         }
@@ -304,6 +406,22 @@ impl Instance {
     fn deserialize_from_path(path: &Path) -> Self {
         let contents = fs::read_to_string(path).raise_with_context(|| format!("reading {}", path.display()));
         toml::from_str(&contents).raise_with_context(|| format!("loading instance {}", path.display()))
+    }
+
+    fn validate_configuration(&self) {
+        self.require_state(&self.configured_initial().0);
+        for name in &self.final_states {
+            self.require_state(name);
+        }
+        for name in &self.skipped_states {
+            self.require_state(name);
+            if name == &self.state.0 || name == &self.configured_initial().0 || self.is_final(name) {
+                raise::raise(format!(
+                    "instance {:?} has invalid skipped state {name:?}: current, initial, or final",
+                    self.name
+                ));
+            }
+        }
     }
 
     fn validate_current_state(&self) {
@@ -499,5 +617,94 @@ mod tests {
         let mut instance = instance_with_transitions();
         instance.state = StateName("Missing".into());
         assert!(raised_message(|| instance.validate_current_state()).contains("Missing"));
+    }
+
+    #[test]
+    fn skipped_branches_expand_in_order_once_and_survive_cycles() {
+        let mut instance = Instance::new(
+            InstanceName::parse("run").unwrap(),
+            Flow::new(
+                FlowName::parse("workflow").unwrap(),
+                StateName("Start".into()),
+                vec![
+                    state(
+                        "Start",
+                        vec![
+                            StateName("A".into()),
+                            StateName("B".into()),
+                            StateName("End".into()),
+                        ],
+                    ),
+                    state("A", vec![StateName("B".into()), StateName("End".into())]),
+                    state("B", vec![StateName("A".into()), StateName("End".into())]),
+                    state("End", vec![]),
+                ],
+            ),
+        );
+        instance.skipped_states.extend(["A".into(), "B".into()]);
+        assert_eq!(
+            instance
+                .effective_next()
+                .iter()
+                .map(|state| state.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["End"]
+        );
+        assert!(
+            raised_message(|| instance.apply_move(Move::Next(StateName("A".into()))))
+                .contains("cannot move next")
+        );
+        assert!(
+            raised_message(|| instance.apply_move(Move::JumpTo(StateName("B".into())))).contains("skipped")
+        );
+        instance.apply_move(Move::Next(StateName("End".into())));
+        assert!(instance.effective_next().is_empty());
+    }
+
+    #[test]
+    fn self_transition_through_skipped_state_is_available() {
+        let mut instance = Instance::new(
+            InstanceName::parse("run").unwrap(),
+            Flow::new(
+                FlowName::parse("workflow").unwrap(),
+                StateName("Start".into()),
+                vec![
+                    state("Start", vec![StateName("Loop".into())]),
+                    state("Loop", vec![StateName("Start".into())]),
+                ],
+            ),
+        );
+        instance.skipped_states.insert("Loop".into());
+        assert_eq!(instance.effective_next()[0].name, "Start");
+        instance.apply_move(Move::Next(StateName("Start".into())));
+    }
+
+    #[test]
+    fn skipped_cycle_without_a_final_state_is_not_completable() {
+        let mut instance = Instance::new(
+            InstanceName::parse("run").unwrap(),
+            Flow::new(
+                FlowName::parse("workflow").unwrap(),
+                StateName("Start".into()),
+                vec![
+                    state("Start", vec![StateName("Loop".into())]),
+                    state("Loop", vec![StateName("Loop".into())]),
+                ],
+            ),
+        );
+        instance.skipped_states.insert("Loop".into());
+        assert!(instance.effective_next().is_empty());
+        assert!(!instance.is_final("Start"));
+    }
+
+    #[test]
+    fn custom_final_truncates_transitions_and_default_terminal_remains_terminal() {
+        let mut instance = instance_with_transitions();
+        instance.final_states.insert("Draft".into());
+        assert!(instance.effective_next().is_empty());
+        instance.final_states.clear();
+        assert_eq!(instance.effective_next()[0].name, "Review");
+        instance.apply_move(Move::JumpTo(StateName("Done".into())));
+        assert!(instance.effective_next().is_empty());
     }
 }

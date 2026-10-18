@@ -183,18 +183,14 @@ impl fmt::Display for InstanceStatus<'_> {
         write_steps_section(formatter, "Flow steps", flow.steps())?;
         write_steps_section(formatter, "State steps", &state.steps)?;
 
-        if !state.next.is_empty() {
+        let next_states = instance.effective_next();
+        if !next_states.is_empty() {
             writeln!(formatter)?;
             writeln!(formatter, "Next states:")?;
-            for next in &state.next {
-                let next_state = flow
-                    .states()
-                    .iter()
-                    .find(|candidate| candidate.name == next.0)
-                    .expect("flow transitions were validated when it was loaded");
-                match next_state.summary.as_deref() {
-                    Some(summary) => writeln!(formatter, "  - {}: {summary}", next.0)?,
-                    None => writeln!(formatter, "  - {}", next.0)?,
+            for next in next_states {
+                match next.summary.as_deref() {
+                    Some(summary) => writeln!(formatter, "  - {}: {summary}", next.name)?,
+                    None => writeln!(formatter, "  - {}", next.name)?,
                 }
             }
         }

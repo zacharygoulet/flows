@@ -3,7 +3,12 @@ progress; the agent does the work.
 
 A flow describes states, their guidance, and normal next transitions. Start an
 instance from a flow, use status to read its current guidance, move with next,
-or use jump for exceptional moves.
+or use jump for exceptional moves. Configure an instance's initial state with
+'flows initial' (which resets the current state); setting it to the flow's
+initial state restores the default. Use 'flows final add/remove' for extra
+terminal states, and 'flows skip/unskip' to bypass or restore intermediate states.
+Status lists the effective next states allowed by 'flows next'. Skipped states
+cannot be entered with jump. Flow terminal states always remain terminal.
 
 Instances can be assigned autonomy level per state, per-instance context, and an
 optional informational owner. Ownership does not block operations.

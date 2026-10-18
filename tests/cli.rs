@@ -1177,3 +1177,155 @@ fn new_global_rejects_invalid_global_flow() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("global/flows/workflow.toml"));
     assert!(!root.join("global/flows/instances/run.toml").exists());
 }
+
+#[test]
+fn instance_configuration_persists_and_controls_status_next_jump_and_complete() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let flow = root.join(".flows/workflow.toml");
+    fs::create_dir_all(flow.parent().unwrap()).unwrap();
+    fs::write(
+        &flow,
+        indoc! {r#"
+        initial_state = "Start"
+        use_global = false
+        [[states]]
+        name = "Start"
+        next = ["A", "B", "Finish"]
+        [[states]]
+        name = "A"
+        next = ["B", "Finish"]
+        [[states]]
+        name = "B"
+        next = ["Finish", "A"]
+        [[states]]
+        name = "Finish"
+        next = []
+    "#},
+    )
+    .unwrap();
+    let path = root.join(".flows/instances/run.toml");
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    for args in [&["skip", "run", "A"][..], &["skip", "run", "B"]] {
+        let result = run_cli(root, args);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    let status = run_cli(root, &["status", "run"]);
+    let text = String::from_utf8_lossy(&status.stdout);
+    assert!(text.contains("Next states:\n  - Finish\n"), "{text}");
+    assert!(!run_cli(root, &["next", "run", "A"]).status.success());
+    assert!(!run_cli(root, &["jump", "run", "B"]).status.success());
+    assert!(run_cli(root, &["next", "run", "Finish"]).status.success());
+    assert!(run_cli(root, &["complete", "run"]).status.success());
+    assert!(!path.exists());
+}
+
+#[test]
+fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouched() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_movable_flow(&root.join(".flows/workflow.toml"));
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    let path = root.join(".flows/instances/run.toml");
+    assert!(run_cli(root, &["initial", "run", "Review"]).status.success());
+    let contents = fs::read_to_string(&path).unwrap();
+    assert!(contents.contains("initial_state = \"Review\""), "{contents}");
+    assert!(contents.contains("state = \"Review\""), "{contents}");
+    assert!(run_cli(root, &["jump", "run", "Design"]).status.success());
+    assert!(run_cli(root, &["initial", "run", "Review"]).status.success());
+    assert!(run_cli(root, &["final", "add", "run", "Review"]).status.success());
+    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
+    assert!(!status.contains("Next states:"), "{status}");
+    assert!(
+        run_cli(root, &["final", "remove", "run", "Review"])
+            .status
+            .success()
+    );
+    assert!(run_cli(root, &["initial", "run", "Design"]).status.success());
+    let contents = fs::read_to_string(&path).unwrap();
+    assert!(!contents.contains("initial_state"), "{contents}");
+    assert!(!contents.contains("final_states"), "{contents}");
+    for args in [
+        &["skip", "run", "Design"][..],
+        &["skip", "run", "Missing"],
+        &["initial", "run", "Missing"],
+        &["final", "remove", "run", "Review"],
+        &["unskip", "run", "Review"],
+    ] {
+        let before = fs::read(&path).unwrap();
+        assert!(!run_cli(root, args).status.success(), "{args:?}");
+        assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
+    }
+    assert!(run_cli(root, &["final", "add", "run", "Review"]).status.success());
+    let before = fs::read(&path).unwrap();
+    assert!(!run_cli(root, &["skip", "run", "Review"]).status.success());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(
+        run_cli(root, &["final", "remove", "run", "Review"])
+            .status
+            .success()
+    );
+    let before = fs::read(&path).unwrap();
+    assert!(!run_cli(root, &["skip", "run", "Review"]).status.success());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(run_cli(root, &["initial", "run", "Review"]).status.success());
+}
+
+#[test]
+fn custom_final_allows_completion_despite_flow_transitions() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_movable_flow(&root.join(".flows/workflow.toml"));
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    assert!(run_cli(root, &["final", "add", "run", "Design"]).status.success());
+    assert!(run_cli(root, &["complete", "run"]).status.success());
+    assert!(!root.join(".flows/instances/run.toml").exists());
+}
+
+#[test]
+fn skipped_cycle_does_not_make_a_nonfinal_state_completable() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let flow = root.join(".flows/workflow.toml");
+    fs::create_dir_all(flow.parent().unwrap()).unwrap();
+    fs::write(
+        &flow,
+        "initial_state = 'Start'\nuse_global = false\n[[states]]\nname = 'Start'\nnext = ['Loop']\n[[states]]\nname = 'Loop'\nnext = ['Loop']\n",
+    )
+    .unwrap();
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    assert!(run_cli(root, &["skip", "run", "Loop"]).status.success());
+    let path = root.join(".flows/instances/run.toml");
+    let before = fs::read(&path).unwrap();
+    assert!(!run_cli(root, &["complete", "run"]).status.success());
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn invalid_persisted_instance_configuration_is_rejected_on_load() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_movable_flow(&root.join(".flows/workflow.toml"));
+    let path = root.join(".flows/instances/run.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    for extra in [
+        "initial_state = 'Missing'\n",
+        "final_states = ['Missing']\n",
+        "skipped_states = ['Missing']\n",
+        "skipped_states = ['Design']\n",
+        "skipped_states = ['Review']\n",
+        "skipped_states = ['Review']\nfinal_states = ['Review']\n",
+    ] {
+        fs::write(&path, format!("flow = 'workflow'\nstate = 'Design'\n{extra}")).unwrap();
+        let output = run_cli(root, &["status", "run"]);
+        assert!(!output.status.success(), "{extra}");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            format!("flow = 'workflow'\nstate = 'Design'\n{extra}")
+        );
+    }
+}
