@@ -139,7 +139,7 @@ impl Instance {
             .unwrap_or_else(|| self.flow.initial_state())
     }
 
-    fn is_final(&self, name: &str) -> bool {
+    pub(crate) fn is_final(&self, name: &str) -> bool {
         self.state_overrides.finals.contains(name)
             || self.find_state(name).is_some_and(|state| state.next.is_empty())
     }

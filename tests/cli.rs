@@ -644,6 +644,8 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
     "}
     );
     assert_eq!(fs::read(&instance_path).unwrap(), before);
+    let future_final = String::from_utf8(run_cli(root, &["status", "run", "Done"]).stdout).unwrap();
+    assert!(!future_final.contains("flows complete"), "{future_final}");
     assert_eq!(run_cli(root, &["status", "run"]).stdout, current);
     let invalid = run_cli(root, &["status", "run", "Unknown"]);
     assert!(!invalid.status.success());
@@ -702,7 +704,12 @@ fn status_preview_respects_final_and_skip_overrides() {
     let preview = run_cli(root, &["status", "run", "Design"]);
     let text = String::from_utf8_lossy(&preview.stdout);
     assert!(preview.status.success(), "{text}");
-    assert!(!text.contains("Next states:"), "{text}");
+    assert!(
+        text.contains(
+            "Next states:\n  This is the final state. Run `flows complete run` to complete the flow."
+        ),
+        "{text}"
+    );
     assert_eq!(fs::read(&path).unwrap(), before);
     // A preview of another state must not inherit the current state's final override.
     let other = run_cli(root, &["status", "run", "Review"]);
@@ -1364,6 +1371,13 @@ fn complete_deletes_an_instance_only_at_a_terminal_state() {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n").unwrap();
 
+    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
+    assert!(
+        status.contains(
+            "Next states:\n  This is the final state. Run `flows complete run` to complete the flow."
+        ),
+        "{status}"
+    );
     let completed = run_cli(root, &["complete", "run"]);
     assert!(
         completed.status.success(),
@@ -1512,7 +1526,12 @@ fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouc
     );
     assert!(saved.get("finals").is_none(), "{saved}");
     let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
-    assert!(!status.contains("Next states:"), "{status}");
+    assert!(
+        status.contains(
+            "Next states:\n  This is the final state. Run `flows complete run` to complete the flow."
+        ),
+        "{status}"
+    );
     assert!(
         run_cli(root, &["state-overrides", "final", "remove", "run", "Review"])
             .status
@@ -1601,6 +1620,8 @@ fn skipped_cycle_does_not_make_a_nonfinal_state_completable() {
     );
     let path = root.join(".flows/instances/run.toml");
     let before = fs::read(&path).unwrap();
+    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
+    assert!(!status.contains("This is the final state"), "{status}");
     assert!(!run_cli(root, &["complete", "run"]).status.success());
     assert_eq!(fs::read(&path).unwrap(), before);
 }

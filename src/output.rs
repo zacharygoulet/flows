@@ -241,6 +241,14 @@ fn write_status(
                 None => writeln!(formatter, "  - {}", next.name)?,
             }
         }
+    } else if state.name == current.name && instance.is_final(&state.name) {
+        writeln!(formatter)?;
+        writeln!(formatter, "Next states:")?;
+        writeln!(
+            formatter,
+            "  This is the final state. Run `flows complete {}` to complete the flow.",
+            instance.name()
+        )?;
     }
     Ok(())
 }
