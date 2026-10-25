@@ -14,7 +14,7 @@ const CONTEXT_VALUE_LIMIT_MESSAGE: &str = "context values must be at most 150 ch
 #[derive(Parser)]
 #[command(about = HELP_OVERVIEW)]
 enum Cli {
-    /// Start a new instance from a flow.
+    /// Start a new instance from a flow and show its status.
     Start {
         /// Flow to start from.
         flow_name: FlowName,
@@ -31,7 +31,7 @@ enum Cli {
         owner: Option<String>,
     },
 
-    /// Claim an unowned instance, or confirm the existing claim for the same owner.
+    /// Claim an unowned instance, or confirm the claim; show its status.
     Resume {
         instance_name: InstanceName,
         /// Agent identifier to claim the instance for.
@@ -54,7 +54,7 @@ enum Cli {
     /// Complete and delete an instance in a terminal state.
     Complete { instance_name: InstanceName },
 
-    /// Move to a listed next state.
+    /// Move to a listed next state and show its status.
     Next {
         /// Instance to move.
         instance_name: InstanceName,
@@ -68,7 +68,7 @@ enum Cli {
         action: StateOverridesAction,
     },
 
-    /// Jump to any unskipped defined state, including exceptional moves.
+    /// Jump to any unskipped defined state and show its status.
     Jump {
         /// Instance to move.
         instance_name: InstanceName,
@@ -76,10 +76,12 @@ enum Cli {
         target: String,
     },
 
-    /// Show an instance's current state guidance or list all instances.
+    /// Show current or named state guidance without moving, or list all instances.
     Status {
         /// Instance to inspect; omit to list all instances.
         instance_name: Option<InstanceName>,
+        /// State to inspect without changing the instance.
+        state: Option<String>,
     },
 
     /// List flows or states in a flow.
@@ -111,7 +113,7 @@ enum Cli {
 
 #[derive(Subcommand)]
 enum StateOverridesAction {
-    /// Set an instance's initial state and reset its current state.
+    /// Set an instance's initial state, reset its current state, and show status.
     Initial {
         instance_name: InstanceName,
         state: String,
@@ -216,11 +218,20 @@ fn run(cli: Cli) {
             println!("completed instance {instance_name}");
         }
         Cli::NewFlowFromTemplate { flow_name, global } => create_flow_from_template(flow_name, global),
-        Cli::Status { instance_name: Some(instance_name) } => {
+        Cli::Status { instance_name: Some(instance_name), state } => {
             let instance = Instance::load_from_name(instance_name.as_str());
-            print!("{}", instance.status());
+            print!(
+                "{}",
+                match state {
+                    Some(state) => instance.status_for_state(&state),
+                    None => instance.status(),
+                }
+            );
         }
-        Cli::Status { instance_name: None } => status_all(),
+        Cli::Status { instance_name: None, state: None } => status_all(),
+        Cli::Status { instance_name: None, state: Some(_) } => {
+            unreachable!("clap requires the instance name")
+        }
         Cli::List { target } => list(target),
         Cli::Context { action } => change_context(action),
         Cli::Autonomy { action } => change_autonomy(action),

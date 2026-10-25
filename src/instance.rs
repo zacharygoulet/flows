@@ -106,6 +106,11 @@ impl Instance {
         format!("{}", crate::output::InstanceStatus(self))
     }
 
+    pub fn status_for_state(&self, name: &str) -> String {
+        self.require_state(name);
+        format!("{}", crate::output::StatePreview(self, name))
+    }
+
     pub fn new(name: InstanceName, flow: Flow) -> Self {
         flow.validate();
         let state = flow.initial_state().clone();
@@ -140,12 +145,14 @@ impl Instance {
     }
 
     pub fn effective_next(&self) -> Vec<&State> {
-        if self.is_final(&self.state.0) {
+        self.effective_next_for(&self.state.0)
+    }
+
+    pub fn effective_next_for(&self, name: &str) -> Vec<&State> {
+        if self.is_final(name) {
             return Vec::new();
         }
-        let current = self
-            .find_state(&self.state.0)
-            .expect("current state was validated");
+        let current = self.find_state(name).expect("state was validated");
         let mut visited = HashSet::new();
         let mut result = Vec::new();
         for next in &current.next {
@@ -360,10 +367,11 @@ impl Instance {
     }
 
     pub fn current_autonomy(&self) -> Autonomy {
-        *self
-            .autonomy
-            .get(&self.state.0)
-            .expect("current state autonomy was initialized")
+        self.autonomy_for(&self.state.0)
+    }
+
+    pub fn autonomy_for(&self, name: &str) -> Autonomy {
+        *self.autonomy.get(name).expect("state autonomy was initialized")
     }
 
     pub fn save_new(&self, policy: InstanceSavePolicy) -> PathBuf {

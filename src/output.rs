@@ -133,69 +133,116 @@ pub fn autonomy_changed(level: Autonomy, changed: &[String]) -> String {
     for name in changed {
         writeln!(message, "  - {name}").expect("writing to a String cannot fail");
     }
+    message.push_str(concat!(
+        "Ask the user whether to decide consequential upcoming choices together upfront or let the agent ",
+        "make choices as work progresses. If they choose upfront, inspect upcoming state guidance ",
+        "with `flows status <instance-name> <state>` and ask informed questions with recommendations.\n"
+    ));
     message
 }
 
 pub struct InstanceStatus<'a>(pub &'a Instance);
+pub struct StatePreview<'a>(pub &'a Instance, pub &'a str);
 
 impl fmt::Display for InstanceStatus<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let instance = self.0;
-        let flow = instance.flow();
-        let state = flow
-            .states()
-            .iter()
-            .find(|state| state.name == instance.state().0)
-            .expect("the instance state was validated when it was loaded");
+        write_status(formatter, self.0, None)
+    }
+}
 
-        writeln!(formatter, "Instance Status")?;
+impl fmt::Display for StatePreview<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_status(formatter, self.0, Some(self.1))
+    }
+}
+
+fn write_status(
+    formatter: &mut fmt::Formatter<'_>,
+    instance: &Instance,
+    preview: Option<&str>,
+) -> fmt::Result {
+    let flow = instance.flow();
+    let current = flow
+        .states()
+        .iter()
+        .find(|state| state.name == instance.state().0)
+        .expect("the instance state was validated when it was loaded");
+    let state = preview
+        .map(|name| {
+            flow.states()
+                .iter()
+                .find(|state| state.name == name)
+                .expect("preview state was validated")
+        })
+        .unwrap_or(current);
+
+    writeln!(
+        formatter,
+        "{}",
+        if preview.is_some() {
+            "State Preview"
+        } else {
+            "Instance Status"
+        }
+    )?;
+    writeln!(formatter)?;
+    write_summary_line(formatter, "flow", flow.name().as_str(), flow.summary().as_deref())?;
+    write_summary_line(
+        formatter,
+        "current state",
+        &current.name,
+        current.summary.as_deref(),
+    )?;
+    if preview.is_some() {
+        write_summary_line(
+            formatter,
+            "inspected state",
+            &state.name,
+            state.summary.as_deref(),
+        )?;
+    }
+    let autonomy = instance.autonomy_for(&state.name);
+    writeln!(
+        formatter,
+        "autonomy: {autonomy} ({})",
+        autonomy_description(autonomy)
+    )?;
+    writeln!(
+        formatter,
+        "owner: {}",
+        instance.owner().as_deref().unwrap_or("unowned")
+    )?;
+
+    if !instance.context().is_empty() {
+        writeln!(formatter, "context:")?;
+        formatter
+            .write_str(&toml::to_string(instance.context()).expect("context strings serialize to TOML"))?;
+    }
+
+    let global_guidance = flow.use_global().then(GlobalGuidance::bundled);
+    if let Some(guidance) = &global_guidance {
+        write_section(formatter, "Global details", guidance.details().as_deref())?;
+    }
+    write_section(formatter, "Flow details", flow.details().as_deref())?;
+    write_section(formatter, "State details", state.details.as_deref())?;
+    if let Some(guidance) = &global_guidance {
+        write_steps_section(formatter, "Global steps", guidance.steps())?;
+    }
+    write_steps_section(formatter, "Flow steps", flow.steps())?;
+    write_steps_section(formatter, "State steps", &state.steps)?;
+
+    let next_states = instance.effective_next_for(&state.name);
+    if !next_states.is_empty() {
         writeln!(formatter)?;
-        write_summary_line(formatter, "flow", flow.name().as_str(), flow.summary().as_deref())?;
-        write_summary_line(formatter, "current state", &state.name, state.summary.as_deref())?;
-        let autonomy = instance.current_autonomy();
-        writeln!(
-            formatter,
-            "autonomy: {autonomy} ({})",
-            autonomy_description(autonomy)
-        )?;
-        writeln!(
-            formatter,
-            "owner: {}",
-            instance.owner().as_deref().unwrap_or("unowned")
-        )?;
-
-        if !instance.context().is_empty() {
-            writeln!(formatter, "context:")?;
-            formatter.write_str(
-                &toml::to_string(instance.context()).expect("context strings serialize to TOML"),
-            )?;
-        }
-
-        let global_guidance = flow.use_global().then(GlobalGuidance::bundled);
-        if let Some(guidance) = &global_guidance {
-            write_section(formatter, "Global details", guidance.details().as_deref())?;
-        }
-        write_section(formatter, "Flow details", flow.details().as_deref())?;
-        write_section(formatter, "State details", state.details.as_deref())?;
-        if let Some(guidance) = &global_guidance {
-            write_steps_section(formatter, "Global steps", guidance.steps())?;
-        }
-        write_steps_section(formatter, "Flow steps", flow.steps())?;
-        write_steps_section(formatter, "State steps", &state.steps)?;
-
-        let next_states = instance.effective_next();
-        if !next_states.is_empty() {
-            writeln!(formatter)?;
-            writeln!(formatter, "Next states:")?;
-            for next in next_states {
-                match next.summary.as_deref() {
-                    Some(summary) => writeln!(formatter, "  - {}: {summary}", next.name)?,
-                    None => writeln!(formatter, "  - {}", next.name)?,
-                }
+        writeln!(formatter, "Next states:")?;
+        for next in next_states {
+            match next.summary.as_deref() {
+                Some(summary) => writeln!(formatter, "  - {}: {summary}", next.name)?,
+                None => writeln!(formatter, "  - {}", next.name)?,
             }
         }
-        Ok(())
     }
+    Ok(())
 }
 
 fn write_summary_line(

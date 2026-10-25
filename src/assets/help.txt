@@ -19,7 +19,7 @@ choices and reporting progress. Autonomous autonomy works independently, stoppin
 only for fundamental blockers. Set each level with autonomy set.
 
 Use 'flows status' to see available instances
-Use 'flows status <instance-name>' to know what you are supposed to do for current state.
-Use 'flows start' to start a new instance
+Use 'flows start <...>' to start a new instance
+Use 'flows resume <...>' to resume an existing instance
 Use 'flows help' for all commands.
 Use 'flows help <command>' for a command's arguments and options.

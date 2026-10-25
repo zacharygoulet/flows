@@ -27,6 +27,8 @@ fn load_with_flow(flow_contents: Option<&str>) -> Output {
     run_cli(root, &["status", "run"])
 }
 
+const AUTONOMY_HINT: &str = "Ask the user whether to decide consequential upcoming choices together upfront or let the agent make choices as work progresses. If they choose upfront, inspect upcoming state guidance with `flows status <instance-name> <state>` and ask informed questions with recommendations.\n";
+
 fn run_cli(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_flows"))
         .args(args)
@@ -158,6 +160,47 @@ fn help_for_command_shows_clap_generated_arguments() {
         "{text}"
     );
     assert!(text.contains("guided, steered, or autonomous"), "{text}");
+}
+
+#[test]
+fn status_printing_commands_advertise_their_output() {
+    let directory = tempfile::tempdir().unwrap();
+    for args in [
+        &["help", "start"][..],
+        &["help", "resume"],
+        &["help", "next"],
+        &["help", "jump"],
+        &["help", "state-overrides", "initial"],
+    ] {
+        let help = run_cli(directory.path(), args);
+        assert!(
+            help.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&help.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&help.stdout).contains("show"),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&help.stdout)
+        );
+        assert!(String::from_utf8_lossy(&help.stdout).contains("status"));
+    }
+}
+
+#[test]
+fn status_help_documents_optional_preview_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let help = run_cli(directory.path(), &["help", "status"]);
+    assert!(help.status.success());
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        text.contains("Usage: flows status [INSTANCE_NAME] [STATE]"),
+        "{text}"
+    );
+    assert!(
+        text.contains("State to inspect without changing the instance"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -526,6 +569,154 @@ fn status_displays_flow_state_and_next_state_metadata() {
 }
 
 #[test]
+fn status_preview_shows_selected_guidance_without_changing_instance() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let path = root.join(".flows/workflow.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        indoc! {r#"
+        use_global = false
+        summary = "Workflow summary"
+        details = "Flow guidance"
+        steps = ["Flow step"]
+        initial_state = "Design"
+        [[states]]
+        name = "Design"
+        summary = "Planning"
+        details = "Design guidance"
+        steps = ["Design step"]
+        next = ["Review"]
+        [[states]]
+        name = "Review"
+        summary = "Checking"
+        details = "Review guidance"
+        steps = ["Review step"]
+        next = ["Done"]
+        [[states]]
+        name = "Done"
+        summary = "Finished"
+        next = []
+    "#},
+    )
+    .unwrap();
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    assert!(
+        run_cli(root, &["autonomy", "set", "run", "steered", "Review"])
+            .status
+            .success()
+    );
+    let instance_path = root.join(".flows/instances/run.toml");
+    let before = fs::read(&instance_path).unwrap();
+    let current = run_cli(root, &["status", "run"]).stdout;
+    let preview = run_cli(root, &["status", "run", "Review"]);
+    assert!(
+        preview.status.success(),
+        "{}",
+        String::from_utf8_lossy(&preview.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&preview.stdout),
+        indoc! {"\
+        State Preview
+
+        flow: workflow (Workflow summary)
+        current state: Design (Planning)
+        inspected state: Review (Checking)
+        autonomy: steered (Proceed by default; ask on consequential choices and report progress.)
+        owner: unowned
+
+        Flow details:
+        Flow guidance
+
+        State details:
+        Review guidance
+
+        Flow steps:
+        - Flow step
+
+        State steps:
+        - Review step
+
+        Next states:
+          - Done: Finished
+    "}
+    );
+    assert_eq!(fs::read(&instance_path).unwrap(), before);
+    assert_eq!(run_cli(root, &["status", "run"]).stdout, current);
+    let invalid = run_cli(root, &["status", "run", "Unknown"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unknown state \"Unknown\""));
+    assert!(invalid.stdout.is_empty());
+    assert_eq!(fs::read(&instance_path).unwrap(), before);
+}
+
+#[test]
+fn status_preview_respects_final_and_skip_overrides() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let flow_path = root.join(".flows/workflow.toml");
+    fs::create_dir_all(flow_path.parent().unwrap()).unwrap();
+    fs::write(
+        &flow_path,
+        indoc! {r#"
+        initial_state = "Design"
+        [[states]]
+        name = "Design"
+        next = ["Review"]
+        [[states]]
+        name = "Review"
+        next = ["Done"]
+        [[states]]
+        name = "Done"
+        next = []
+    "#},
+    )
+    .unwrap();
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    assert!(
+        run_cli(root, &["state-overrides", "skip", "run", "Review"])
+            .status
+            .success()
+    );
+    let path = root.join(".flows/instances/run.toml");
+    let before = fs::read(&path).unwrap();
+    let preview = run_cli(root, &["status", "run", "Design"]);
+    let text = String::from_utf8_lossy(&preview.stdout);
+    assert!(preview.status.success(), "{text}");
+    assert!(
+        text.contains("current state: Design\ninspected state: Design"),
+        "{text}"
+    );
+    assert!(text.contains("Next states:\n  - Done\n"), "{text}");
+    assert!(!text.contains("  - Review"), "{text}");
+    assert_eq!(fs::read(&path).unwrap(), before);
+
+    assert!(
+        run_cli(root, &["state-overrides", "final", "add", "run", "Design"])
+            .status
+            .success()
+    );
+    let before = fs::read(&path).unwrap();
+    let preview = run_cli(root, &["status", "run", "Design"]);
+    let text = String::from_utf8_lossy(&preview.stdout);
+    assert!(preview.status.success(), "{text}");
+    assert!(!text.contains("Next states:"), "{text}");
+    assert_eq!(fs::read(&path).unwrap(), before);
+    // A preview of another state must not inherit the current state's final override.
+    let other = run_cli(root, &["status", "run", "Review"]);
+    let text = String::from_utf8_lossy(&other.stdout);
+    assert!(other.status.success(), "{text}");
+    assert!(
+        text.contains("current state: Design\ninspected state: Review"),
+        "{text}"
+    );
+    assert!(text.contains("Next states:\n  - Done"), "{text}");
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
+#[test]
 fn status_reports_when_no_instances_exist() {
     let directory = tempfile::tempdir().unwrap();
     let status = run_cli(directory.path(), &["status"]);
@@ -654,7 +845,7 @@ fn autonomy_range_is_persisted_per_state_and_follows_moves() {
     );
     assert_eq!(
         String::from_utf8_lossy(&range.stdout),
-        "set autonomy to steered for states:\n  - Design\n  - Review\n"
+        format!("set autonomy to steered for states:\n  - Design\n  - Review\n{AUTONOMY_HINT}")
     );
     let single = run_cli(root, &["autonomy", "set", "run", "autonomous", "Review"]);
     assert!(
@@ -665,7 +856,7 @@ fn autonomy_range_is_persisted_per_state_and_follows_moves() {
 
     assert_eq!(
         String::from_utf8_lossy(&single.stdout),
-        "set autonomy to autonomous for states:\n  - Review\n"
+        format!("set autonomy to autonomous for states:\n  - Review\n{AUTONOMY_HINT}")
     );
     let path = root.join(".flows/instances/run.toml");
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -739,7 +930,9 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
     );
     assert_eq!(
         String::from_utf8_lossy(&range.stdout),
-        "set autonomy to steered for states:\n  - End\n  - Right\n  - Start\n  - Loop\n  - Left\n"
+        format!(
+            "set autonomy to steered for states:\n  - End\n  - Right\n  - Start\n  - Loop\n  - Left\n{AUTONOMY_HINT}"
+        )
     );
     let saved: toml::Value =
         toml::from_str(&fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap()).unwrap();
@@ -753,7 +946,7 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
     let same = run_cli(root, &["autonomy", "set", "run", "autonomous", "End", "End"]);
     assert_eq!(
         String::from_utf8_lossy(&same.stdout),
-        "set autonomy to autonomous for states:\n  - End\n"
+        format!("set autonomy to autonomous for states:\n  - End\n{AUTONOMY_HINT}")
     );
     let original = fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap();
     let unreachable = run_cli(root, &["autonomy", "set", "run", "steered", "Start", "Unrelated"]);
