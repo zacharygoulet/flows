@@ -117,7 +117,7 @@ impl Instance {
         let autonomy = flow
             .states()
             .iter()
-            .map(|state| (state.name.clone(), Autonomy::Guided))
+            .map(|state| (state.name.clone(), state.autonomy))
             .collect();
         let instance = Self {
             name,
@@ -389,7 +389,10 @@ impl Instance {
         instance.validate_current_state();
         instance.validate_configuration();
         for state in instance.flow.states() {
-            instance.autonomy.entry(state.name.clone()).or_default();
+            instance
+                .autonomy
+                .entry(state.name.clone())
+                .or_insert(state.autonomy);
         }
         for name in instance.autonomy.keys() {
             if !instance.flow.states().iter().any(|state| &state.name == name) {
@@ -529,7 +532,14 @@ mod tests {
     }
 
     fn state(name: &str, next: Vec<StateName>) -> State {
-        State { name: name.to_owned(), next, summary: None, details: None, steps: Vec::new() }
+        State {
+            name: name.to_owned(),
+            autonomy: Default::default(),
+            next,
+            summary: None,
+            details: None,
+            steps: Vec::new(),
+        }
     }
 
     fn instance_with_transitions() -> Instance {

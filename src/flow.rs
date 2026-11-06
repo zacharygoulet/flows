@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    FlowName, Instance, InstanceName,
+    Autonomy, FlowName, Instance, InstanceName,
     file_writer::FileWriter,
     storage::{Scope, Storage},
 };
@@ -37,6 +37,8 @@ fn default_use_global() -> bool {
 #[derive(Debug, Deserialize)]
 pub struct State {
     pub name: String,
+    #[serde(default)]
+    pub autonomy: Autonomy,
     #[serde(default)]
     pub next: Vec<StateName>,
     #[serde(default)]
@@ -177,7 +179,14 @@ mod tests {
     }
 
     fn state(name: &str, next: Vec<StateName>) -> State {
-        State { name: name.to_owned(), next, summary: None, details: None, steps: Vec::new() }
+        State {
+            name: name.to_owned(),
+            autonomy: Default::default(),
+            next,
+            summary: None,
+            details: None,
+            steps: Vec::new(),
+        }
     }
 
     fn flow(initial_state: &str, states: Vec<State>) -> Flow {

@@ -13,10 +13,14 @@ Context is a persistent set of compact reminders or pointers for later states, s
 an issue ID or plan URL. Values are limited to 150 characters; keep detailed plans,
 requirements, and notes in their proper documents instead.
 
-Each state starts with guided autonomy: pause for approval at state boundaries and
-significant decisions. Steered autonomy proceeds by default, asking on consequential
-choices and reporting progress. Autonomous autonomy works independently, stopping
-only for fundamental blockers. Set each level with autonomy set.
+Each [[states]] entry can set autonomy = "guided", "steered", or "autonomous";
+omitted values default to guided. Guided autonomy pauses for approval at state
+boundaries and significant decisions. Steered autonomy proceeds by default, asking
+on consequential choices and reporting progress. Autonomous autonomy works independently,
+stopping only for fundamental blockers.
+New instances save these defaults per state. Loading older instances fills only
+missing autonomy entries from the flow defaults; saved values are preserved even
+if the flow defaults change. Override saved levels with 'flows autonomy set'.
 
 Use 'flows status' to see available instances
 Use 'flows start <...>' to start a new instance
