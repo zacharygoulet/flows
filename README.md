@@ -7,6 +7,10 @@ A flow describes states, their guidance, and normal next transitions. Start an
 instance from a flow, use status to read its current guidance, move with next,
 or use jump for exceptional moves.
 
+Use `flows next <instance-name> [target]` to move to a listed next state.
+Omit the target to select the first available transition, expanding skipped
+states in order. The instance name is always required.
+
 Instances can be assigned autonomy level per state, per-instance context, and an
 optional informational owner. Ownership does not block operations.
 

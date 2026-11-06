@@ -188,6 +188,28 @@ fn status_printing_commands_advertise_their_output() {
 }
 
 #[test]
+fn next_requires_an_instance_and_help_documents_optional_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let missing = run_cli(root, &["next"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("<INSTANCE_NAME>"));
+    assert!(!root.join(".flows").exists());
+
+    let help = run_cli(root, &["help", "next"]);
+    assert!(help.status.success());
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(
+        text.contains("Usage: flows next <INSTANCE_NAME> [TARGET]"),
+        "{text}"
+    );
+    assert!(
+        text.contains("omit to select the first available transition"),
+        "{text}"
+    );
+}
+
+#[test]
 fn status_help_documents_optional_preview_state() {
     let directory = tempfile::tempdir().unwrap();
     let help = run_cli(directory.path(), &["help", "status"]);
@@ -733,6 +755,119 @@ fn status_reports_when_no_instances_exist() {
         String::from_utf8_lossy(&status.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&status.stdout), "no instances found\n");
+}
+
+fn write_branching_flow(root: &Path) {
+    let path = root.join(".flows/workflow.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        indoc! {r#"
+            initial_state = "Start"
+            [[states]]
+            name = "Start"
+            next = ["First", "Second"]
+            [[states]]
+            name = "Second"
+            next = []
+            [[states]]
+            name = "Expanded"
+            next = []
+            [[states]]
+            name = "First"
+            next = ["Expanded", "Second"]
+        "#},
+    )
+    .unwrap();
+}
+
+#[test]
+fn next_without_target_uses_transition_order_and_preserves_explicit_output() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_branching_flow(root);
+    for name in ["run", "other"] {
+        assert!(run_cli(root, &["start", "workflow", name]).status.success());
+    }
+    let path = root.join(".flows/instances/run.toml");
+    let implicit = run_cli(root, &["next", "run"]);
+    assert!(
+        implicit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&implicit.stderr)
+    );
+    let saved = fs::read(&path).unwrap();
+    assert!(String::from_utf8_lossy(&saved).contains("state = \"First\""));
+    assert!(run_cli(root, &["jump", "run", "Start"]).status.success());
+    let explicit = run_cli(root, &["next", "run", "First"]);
+    assert!(explicit.status.success());
+    assert_eq!(implicit.stdout, explicit.stdout);
+    assert_eq!(saved, fs::read(path).unwrap());
+}
+
+#[test]
+fn next_without_target_expands_the_first_skipped_branch_before_later_branches() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_branching_flow(root);
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    assert!(
+        run_cli(root, &["state-overrides", "skip", "run", "First"])
+            .status
+            .success()
+    );
+    let next = run_cli(root, &["next", "run"]);
+    assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
+    assert!(String::from_utf8_lossy(&next.stdout).contains("state: Expanded"));
+    assert!(
+        fs::read_to_string(root.join(".flows/instances/run.toml"))
+            .unwrap()
+            .contains("state = \"Expanded\"")
+    );
+}
+
+#[test]
+fn next_explicit_nonfirst_target_and_invalid_target_keep_existing_behavior() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_branching_flow(root);
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    let path = root.join(".flows/instances/run.toml");
+    let before = fs::read(&path).unwrap();
+    let invalid = run_cli(root, &["next", "run", "Expanded"]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("cannot move next to \"Expanded\""));
+    assert_eq!(before, fs::read(&path).unwrap());
+
+    let next = run_cli(root, &["next", "run", "Second"]);
+    assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
+    assert!(String::from_utf8_lossy(&next.stdout).contains("state: Second"));
+    assert!(fs::read_to_string(path).unwrap().contains("state = \"Second\""));
+}
+
+#[test]
+fn next_without_target_at_terminal_or_custom_final_does_not_modify_storage() {
+    for setup in [
+        &["jump", "run", "Review"][..],
+        &["state-overrides", "final", "add", "run", "Design"],
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write_movable_flow(&root.join(".flows/workflow.toml"));
+        assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+        assert!(run_cli(root, setup).status.success());
+        let path = root.join(".flows/instances/run.toml");
+        let before = fs::read(&path).unwrap();
+        let flow_before = fs::read(root.join(".flows/workflow.toml")).unwrap();
+        let next = run_cli(root, &["next", "run"]);
+        assert!(!next.status.success());
+        assert!(
+            String::from_utf8_lossy(&next.stderr).contains("instance run has no available next transitions")
+        );
+        assert!(next.stdout.is_empty());
+        assert_eq!(before, fs::read(path).unwrap());
+        assert_eq!(flow_before, fs::read(root.join(".flows/workflow.toml")).unwrap());
+    }
 }
 
 #[test]
@@ -1622,6 +1757,11 @@ fn skipped_cycle_does_not_make_a_nonfinal_state_completable() {
     let before = fs::read(&path).unwrap();
     let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
     assert!(!status.contains("This is the final state"), "{status}");
+    let next = run_cli(root, &["next", "run"]);
+    assert!(!next.status.success());
+    assert!(String::from_utf8_lossy(&next.stderr).contains("instance run has no available next transitions"));
+    assert!(next.stdout.is_empty());
+    assert_eq!(fs::read(&path).unwrap(), before);
     assert!(!run_cli(root, &["complete", "run"]).status.success());
     assert_eq!(fs::read(&path).unwrap(), before);
 }

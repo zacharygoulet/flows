@@ -58,8 +58,8 @@ enum Cli {
     Next {
         /// Instance to move.
         instance_name: InstanceName,
-        /// Listed next state.
-        target: String,
+        /// Listed next state; omit to select the first available transition.
+        target: Option<String>,
     },
 
     /// Configure initial, final, and skipped states for an instance.
@@ -236,8 +236,11 @@ fn run(cli: Cli) {
         Cli::Context { action } => change_context(action),
         Cli::Autonomy { action } => change_autonomy(action),
         Cli::StateOverrides { action } => change_state_overrides(action),
-        Cli::Next { instance_name, target } => move_instance(instance_name, Move::Next(StateName(target))),
-        Cli::Jump { instance_name, target } => move_instance(instance_name, Move::JumpTo(StateName(target))),
+        Cli::Next { instance_name, target } => next_instance(instance_name, target),
+        Cli::Jump { instance_name, target } => move_instance(
+            Instance::load_from_name(instance_name.as_str()),
+            Move::JumpTo(StateName(target)),
+        ),
     }
 }
 
@@ -339,8 +342,24 @@ fn change_autonomy(action: AutonomyAction) {
     }
 }
 
-fn move_instance(instance_name: InstanceName, movement: Move) {
-    let instance = Instance::load_from_name(instance_name.as_str()).move_to(movement);
+fn next_instance(instance_name: InstanceName, target: Option<String>) {
+    let instance = Instance::load_from_name(instance_name.as_str());
+    let target = target.unwrap_or_else(|| {
+        instance
+            .effective_next()
+            .first()
+            .map(|state| state.name.clone())
+            .unwrap_or_else(|| {
+                rust_utils::raise::raise(format!(
+                    "instance {instance_name} has no available next transitions"
+                ))
+            })
+    });
+    move_instance(instance, Move::Next(StateName(target)));
+}
+
+fn move_instance(instance: Instance, movement: Move) {
+    let instance = instance.move_to(movement);
     println!("{}", output::moved_instance(&instance));
     println!();
     print!("{}", instance.status());
