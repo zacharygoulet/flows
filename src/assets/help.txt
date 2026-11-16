@@ -14,10 +14,10 @@ an issue ID or plan URL. Values are limited to 150 characters; keep detailed pla
 requirements, and notes in their proper documents instead.
 
 Each [[states]] entry can set autonomy = "guided", "steered", or "autonomous";
-omitted values default to guided. Guided autonomy pauses for approval at state
-boundaries and significant decisions. Steered autonomy proceeds by default, asking
-on consequential choices and reporting progress. Autonomous autonomy works independently,
-stopping only for fundamental blockers.
+omitted values default to guided. Guided autonomy confirms state boundaries
+and each emerging design choice. Steered autonomy proceeds with routine work and
+asks on consequential choices. Autonomous autonomy works independently
+and escalates fundamental blockers or reserved decisions.
 New instances save these defaults per state. Loading older instances fills only
 missing autonomy entries from the flow defaults; saved values are preserved even
 if the flow defaults change. Override saved levels with 'flows autonomy set'.

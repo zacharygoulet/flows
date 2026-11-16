@@ -5,11 +5,11 @@ or explaining your choices and recommandations.
 """
 
 steps = [
-    "Drive the flow proactively toward completion making informed choices. Stop ONLY to ask the user a question. Always provide your recommendation with your questions.",
+    "Work proactively.",
     "Always stop for user confirmation before changing state, unless autonomy level says otherwise",
-    "Communicate intentions, findings, decisions, and outcomes as work progresses.",
+    "Explain intentions, findings, decisions, and outcomes as work progresses.",
     "Consider loading relevant skills.",
     "Consider saving context notes if info is relevant to upcoming states.",
     "Consider compacting context if context is bloated or irrelevant for following work.",
-    "Consider a subagent (possible reasons: prevent context bloat, use specialized model, parallel work).",
+    "Consider a subagent when useful.",
 ]

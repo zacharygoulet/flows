@@ -27,7 +27,8 @@ fn load_with_flow(flow_contents: Option<&str>) -> Output {
     run_cli(root, &["status", "run"])
 }
 
-const AUTONOMY_HINT: &str = "Ask the user whether to decide consequential upcoming choices together upfront or let the agent make choices as work progresses. If they choose upfront, inspect upcoming state guidance with `flows status <instance-name> <state>` and ask informed questions with recommendations.\n";
+const AUTONOMY_HINT: &str =
+    "Interview the user about upcoming decisions when the selected autonomy requires it.\n";
 
 fn run_cli(root: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_flows"))
@@ -292,10 +293,7 @@ fn loads_instance_with_separate_flow_file() {
         status.starts_with("Instance Status\n\nflow: workflow\ncurrent state: Design\nautonomy: guided ("),
         "{status}"
     );
-    assert!(
-        status.contains("Global steps:\n- Drive the flow proactively"),
-        "{status}"
-    );
+    assert!(status.contains("Global steps:\n- Work proactively."), "{status}");
 }
 
 #[test]
@@ -567,7 +565,7 @@ fn status_displays_flow_state_and_next_state_metadata() {
 
             flow: workflow (Whole workflow summary)
             current state: Draft (Prepare the work)
-            autonomy: guided (Pause for user approval at state boundaries and significant decisions.)
+            autonomy: guided (Confirm state boundaries and each emerging design choice.)
             owner: unowned
 
             Flow details:
@@ -646,7 +644,7 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
         flow: workflow (Workflow summary)
         current state: Design (Planning)
         inspected state: Review (Checking)
-        autonomy: steered (Proceed by default; ask on consequential choices and report progress.)
+        autonomy: steered (Proceed with routine work; ask on consequential choices.)
         owner: unowned
 
         Flow details:
@@ -1016,7 +1014,7 @@ fn autonomy_range_is_persisted_per_state_and_follows_moves() {
         "{output}"
     );
     assert!(
-        output.contains("Continue independently; stop only for fundamental blockers."),
+        output.contains("Work independently; escalate fundamental blockers or reserved decisions."),
         "{output}"
     );
     assert!(run_cli(root, &["jump", "run", "Done"]).status.success());

@@ -133,11 +133,7 @@ pub fn autonomy_changed(level: Autonomy, changed: &[String]) -> String {
     for name in changed {
         writeln!(message, "  - {name}").expect("writing to a String cannot fail");
     }
-    message.push_str(concat!(
-        "Ask the user whether to decide consequential upcoming choices together upfront or let the agent ",
-        "make choices as work progresses. If they choose upfront, inspect upcoming state guidance ",
-        "with `flows status <instance-name> <state>` and ask informed questions with recommendations.\n"
-    ));
+    message.push_str("Interview the user about upcoming decisions when the selected autonomy requires it.\n");
     message
 }
 
@@ -267,9 +263,9 @@ fn write_summary_line(
 
 fn autonomy_description(autonomy: Autonomy) -> &'static str {
     match autonomy {
-        Autonomy::Guided => "Pause for user approval at state boundaries and significant decisions.",
-        Autonomy::Steered => "Proceed by default; ask on consequential choices and report progress.",
-        Autonomy::Autonomous => "Continue independently; stop only for fundamental blockers.",
+        Autonomy::Guided => "Confirm state boundaries and each emerging design choice.",
+        Autonomy::Steered => "Proceed with routine work; ask on consequential choices.",
+        Autonomy::Autonomous => "Work independently; escalate fundamental blockers or reserved decisions.",
     }
 }
 
