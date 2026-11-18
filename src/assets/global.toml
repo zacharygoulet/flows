@@ -5,11 +5,7 @@ or explaining your choices and recommandations.
 """
 
 steps = [
-    "Work proactively.",
-    "Always stop for user confirmation before changing state, unless autonomy level says otherwise",
-    "Explain intentions, findings, decisions, and outcomes as work progresses.",
     "Consider loading relevant skills.",
     "Consider saving context notes if info is relevant to upcoming states.",
-    "Consider compacting context if context is bloated or irrelevant for following work.",
     "Consider a subagent when useful.",
 ]
