@@ -293,7 +293,13 @@ fn loads_instance_with_separate_flow_file() {
         status.starts_with("Instance Status\n\nflow: workflow\ncurrent state: Design\nautonomy: guided ("),
         "{status}"
     );
-    assert!(status.contains("Global steps:\n- Work proactively."), "{status}");
+    let guidance = flows::GlobalGuidance::bundled();
+    let mut expected_global_steps = String::from("Global steps:\n");
+    for step in guidance.steps() {
+        expected_global_steps.push_str(&format!("- {step}\n"));
+    }
+    expected_global_steps.push('\n');
+    assert!(status.contains(&expected_global_steps), "{status}");
 }
 
 #[test]
