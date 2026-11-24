@@ -15,7 +15,7 @@
         in
         {
           default = pkgs.rustPlatform.buildRustPackage {
-            pname = "flows";
+            pname = "flow";
             version = "0.1.0";
             src = self;
             cargoLock = {

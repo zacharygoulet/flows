@@ -9,9 +9,9 @@ use indoc::indoc;
 fn load_with_flow(flow_contents: Option<&str>) -> Output {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    fs::create_dir_all(root.join(".flows/instances")).unwrap();
+    fs::create_dir_all(root.join(".flow/instances")).unwrap();
     fs::write(
-        root.join(".flows/instances/run.toml"),
+        root.join(".flow/instances/run.toml"),
         indoc! {r#"
             flow = "workflow"
             step = "Design"
@@ -20,18 +20,18 @@ fn load_with_flow(flow_contents: Option<&str>) -> Output {
     .unwrap();
 
     if let Some(contents) = flow_contents {
-        fs::create_dir_all(root.join(".flows")).unwrap();
-        fs::write(root.join(".flows/workflow.toml"), contents).unwrap();
+        fs::create_dir_all(root.join(".flow")).unwrap();
+        fs::write(root.join(".flow/workflow.toml"), contents).unwrap();
     }
 
-    run_cli(root, &["status", "run"])
+    run_cli(root, &["show", "run"])
 }
 
 const AUTONOMY_HINT: &str =
     "Interview the user about upcoming decisions when the selected autonomy requires it.\n";
 
 fn run_cli(root: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_flows"))
+    Command::new(env!("CARGO_BIN_EXE_flow"))
         .args(args)
         .current_dir(root)
         .env("XDG_STATE_HOME", root.join("global"))
@@ -40,11 +40,11 @@ fn run_cli(root: &Path, args: &[&str]) -> Output {
 }
 
 fn write_local_flow(root: &Path) {
-    write_flow(&root.join(".flows/workflow.toml"));
+    write_flow(&root.join(".flow/workflow.toml"));
 }
 
 fn write_global_flow(root: &Path) {
-    write_flow(&root.join("global/flows/workflow.toml"));
+    write_flow(&root.join("global/flow/workflow.toml"));
 }
 
 fn write_flow(path: &Path) {
@@ -103,8 +103,8 @@ fn rename_moves_local_instance_and_preserves_its_data() {
         "{}",
         String::from_utf8_lossy(&renamed.stderr)
     );
-    assert!(!root.join(".flows/instances/run.toml").exists());
-    let status = run_cli(root, &["status", "paused-review"]);
+    assert!(!root.join(".flow/instances/run.toml").exists());
+    let status = run_cli(root, &["show", "paused-review"]);
     assert!(status.status.success());
     let text = String::from_utf8_lossy(&status.stdout);
     assert!(text.contains("agent"), "{text}");
@@ -119,27 +119,27 @@ fn help_explains_flow_then_lists_clap_commands() {
     assert!(help.status.success(), "{}", String::from_utf8_lossy(&help.stderr));
     let text = String::from_utf8_lossy(&help.stdout);
     assert!(
-        text.starts_with("The `flows` tool helps AI agents follow configured, deterministic flows."),
+        text.starts_with("The `flow` tool helps AI agents follow configured, deterministic flows."),
         "{text}"
     );
     assert!(
-        text.find("Autonomous autonomy works independently").unwrap() < text.find("Usage: flows").unwrap()
+        text.find("Autonomous autonomy works independently").unwrap() < text.find("Usage: flow").unwrap()
     );
     for command in [
         "start",
         "next",
         "jump",
-        "status",
+        "show",
         "list",
         "context",
         "rename",
         "autonomy",
-        "step-overrides",
-        "new-flow-from-template",
+        "route",
+        "create-flow",
     ] {
         assert!(text.contains(command), "{text}");
     }
-    assert!(text.contains("Use 'flows help <command>'"), "{text}");
+    assert!(text.contains("Use 'flow help <command>'"), "{text}");
 
     let flag = run_cli(root, &["--help"]);
     assert!(flag.status.success());
@@ -153,13 +153,13 @@ fn help_for_command_shows_clap_generated_arguments() {
     assert!(help.status.success(), "{}", String::from_utf8_lossy(&help.stderr));
     let text = String::from_utf8_lossy(&help.stdout);
     assert!(
-        text.contains("Usage: flows autonomy set <INSTANCE_NAME> <LEVEL> <STEP> [END_STEP]"),
+        text.contains("Usage: flow autonomy set")
+            && text.contains("--step <STEP>")
+            && text.contains("--from <FROM>")
+            && text.contains("--through <THROUGH>"),
         "{text}"
     );
-    assert!(
-        text.contains("Inclusive end step; omit to change only the first step"),
-        "{text}"
-    );
+    assert!(text.contains("Last step of the range"), "{text}");
     assert!(text.contains("guided, steered, or autonomous"), "{text}");
 }
 
@@ -168,10 +168,10 @@ fn status_printing_commands_advertise_their_output() {
     let directory = tempfile::tempdir().unwrap();
     for args in [
         &["help", "start"][..],
-        &["help", "resume"],
+        &["help", "claim"],
         &["help", "next"],
         &["help", "jump"],
-        &["help", "step-overrides", "initial"],
+        &["help", "reset"],
     ] {
         let help = run_cli(directory.path(), args);
         assert!(
@@ -195,17 +195,17 @@ fn next_requires_an_instance_and_help_documents_optional_target() {
     let missing = run_cli(root, &["next"]);
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("<INSTANCE_NAME>"));
-    assert!(!root.join(".flows").exists());
+    assert!(!root.join(".flow").exists());
 
     let help = run_cli(root, &["help", "next"]);
     assert!(help.status.success());
     let text = String::from_utf8_lossy(&help.stdout);
     assert!(
-        text.contains("Usage: flows next <INSTANCE_NAME> [TARGET]"),
+        text.contains("Usage: flow next <INSTANCE_NAME> [TARGET]"),
         "{text}"
     );
     assert!(
-        text.contains("omit to select the first available transition"),
+        text.contains("omit only when exactly one destination is available"),
         "{text}"
     );
 }
@@ -213,11 +213,11 @@ fn next_requires_an_instance_and_help_documents_optional_target() {
 #[test]
 fn status_help_documents_optional_preview_step() {
     let directory = tempfile::tempdir().unwrap();
-    let help = run_cli(directory.path(), &["help", "status"]);
+    let help = run_cli(directory.path(), &["help", "show"]);
     assert!(help.status.success());
     let text = String::from_utf8_lossy(&help.stdout);
     assert!(
-        text.contains("Usage: flows status [INSTANCE_NAME] [STEP]"),
+        text.contains("Usage: flow show [OPTIONS] <INSTANCE_NAME>") && text.contains("--step <STEP>"),
         "{text}"
     );
     assert!(
@@ -232,24 +232,24 @@ fn step_overrides_help_shows_nested_commands() {
     let root = directory.path();
     for (args, usage) in [
         (
-            &["help", "step-overrides", "initial"][..],
-            "Usage: flows step-overrides initial <INSTANCE_NAME> <STEP>",
+            &["help", "route", "initial", "set"][..],
+            "Usage: flow route initial set <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "step-overrides", "final", "add"],
-            "Usage: flows step-overrides final add <INSTANCE_NAME> <STEP>",
+            &["help", "route", "final", "add"],
+            "Usage: flow route final add <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "step-overrides", "final", "remove"],
-            "Usage: flows step-overrides final remove <INSTANCE_NAME> <STEP>",
+            &["help", "route", "final", "remove"],
+            "Usage: flow route final remove <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "step-overrides", "skip"],
-            "Usage: flows step-overrides skip <INSTANCE_NAME> <STEP>",
+            &["help", "route", "skip"],
+            "Usage: flow route skip <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "step-overrides", "unskip"],
-            "Usage: flows step-overrides unskip <INSTANCE_NAME> <STEP>",
+            &["help", "route", "unskip"],
+            "Usage: flow route unskip <INSTANCE_NAME> <STEP>",
         ),
     ] {
         let output = run_cli(root, args);
@@ -293,7 +293,7 @@ fn loads_instance_with_separate_flow_file() {
         status.starts_with("Instance Status\n\nflow: workflow\ncurrent step: Design\nautonomy: guided ("),
         "{status}"
     );
-    let guidance = flows::GlobalGuidance::bundled();
+    let guidance = flow::GlobalGuidance::bundled();
     let mut expected_global_checklist = String::from("Global checklist:\n");
     for item in guidance.checklist() {
         expected_global_checklist.push_str(&format!("- {item}\n"));
@@ -308,7 +308,7 @@ fn reports_missing_flow_from_instance_deserialization() {
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains(r#"flow "workflow" not found"#), "{error}");
-    assert!(error.contains(".flows/workflow.toml"), "{error}");
+    assert!(error.contains(".flow/workflow.toml"), "{error}");
 }
 
 #[test]
@@ -316,14 +316,14 @@ fn rejects_legacy_instance_key() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    fs::create_dir_all(root.join(".flows/instances")).unwrap();
+    fs::create_dir_all(root.join(".flow/instances")).unwrap();
     fs::write(
-        root.join(".flows/instances/run.toml"),
+        root.join(".flow/instances/run.toml"),
         "definition = 'workflow'\nstep = 'Design'\n",
     )
     .unwrap();
 
-    let output = run_cli(root, &["status", "run"]);
+    let output = run_cli(root, &["show", "run"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown field `definition`"));
 }
@@ -333,8 +333,8 @@ fn rejects_legacy_step_schema_without_modifying_instances() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    fs::create_dir_all(root.join(".flows/instances")).unwrap();
-    let path = root.join(".flows/instances/run.toml");
+    fs::create_dir_all(root.join(".flow/instances")).unwrap();
+    let path = root.join(".flow/instances/run.toml");
     for (contents, field) in [
         ("flow = 'workflow'\nstate = 'Design'\n", "state"),
         ("flow = 'workflow'\nstep = 'Design'\nstate = 'Design'\n", "state"),
@@ -344,7 +344,7 @@ fn rejects_legacy_step_schema_without_modifying_instances() {
         ),
     ] {
         fs::write(&path, contents).unwrap();
-        let output = run_cli(root, &["status", "run"]);
+        let output = run_cli(root, &["show", "run"]);
         assert!(!output.status.success());
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains(&format!("unknown field `{field}`")), "{error}");
@@ -366,7 +366,7 @@ fn rejects_legacy_step_commands() {
 fn rejects_legacy_flow_directory() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_flow(&root.join(".flows/definitions/workflow.toml"));
+    write_flow(&root.join(".flow/definitions/workflow.toml"));
 
     let output = run_cli(root, &["start", "workflow", "run"]);
     assert!(!output.status.success());
@@ -384,7 +384,7 @@ fn reports_invalid_flow_from_instance_deserialization() {
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("unknown next step Missing"), "{error}");
-    assert!(error.contains(".flows/workflow.toml"), "{error}");
+    assert!(error.contains(".flow/workflow.toml"), "{error}");
 }
 
 #[test]
@@ -392,13 +392,13 @@ fn new_flow_from_template_creates_a_valid_local_flow() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
 
-    let created = run_cli(root, &["new-flow-from-template", "workflow"]);
+    let created = run_cli(root, &["create-flow", "workflow"]);
     assert!(
         created.status.success(),
         "{}",
         String::from_utf8_lossy(&created.stderr)
     );
-    let flow_path = root.join(".flows/workflow.toml");
+    let flow_path = root.join(".flow/workflow.toml");
     assert_eq!(
         fs::read_to_string(&flow_path).unwrap(),
         include_str!("../src/assets/flow.toml")
@@ -418,17 +418,17 @@ fn new_flow_from_template_supports_global_scope_without_overwriting() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
 
-    let created = run_cli(root, &["new-flow-from-template", "workflow", "-g"]);
+    let created = run_cli(root, &["create-flow", "workflow", "-g"]);
     assert!(
         created.status.success(),
         "{}",
         String::from_utf8_lossy(&created.stderr)
     );
-    let flow_path = root.join("global/flows/workflow.toml");
+    let flow_path = root.join("global/flow/workflow.toml");
     let original = fs::read_to_string(&flow_path).unwrap();
-    assert!(!root.join(".flows/workflow.toml").exists());
+    assert!(!root.join(".flow/workflow.toml").exists());
 
-    let duplicate = run_cli(root, &["new-flow-from-template", "workflow", "-g"]);
+    let duplicate = run_cli(root, &["create-flow", "workflow", "-g"]);
     assert!(!duplicate.status.success());
     assert!(String::from_utf8_lossy(&duplicate.stderr).contains("already exists"));
     assert_eq!(fs::read_to_string(flow_path).unwrap(), original);
@@ -454,7 +454,7 @@ fn new_creates_local_instance_that_can_be_loaded() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("created instance run at"));
-    let instance_path = root.join(".flows/instances/run.toml");
+    let instance_path = root.join(".flow/instances/run.toml");
     assert_eq!(
         fs::read_to_string(&instance_path).unwrap(),
         indoc! {r#"
@@ -466,7 +466,7 @@ fn new_creates_local_instance_that_can_be_loaded() {
         "#}
     );
 
-    let loaded = run_cli(root, &["status", "run"]);
+    let loaded = run_cli(root, &["show", "run"]);
     assert!(
         loaded.status.success(),
         "{}",
@@ -492,7 +492,7 @@ fn status_lists_local_and_global_instances_in_name_order() {
             .success()
     );
 
-    let status = run_cli(root, &["status"]);
+    let status = run_cli(root, &["list", "instances"]);
     assert!(
         status.status.success(),
         "{}",
@@ -507,7 +507,7 @@ fn status_lists_local_and_global_instances_in_name_order() {
 #[test]
 fn lists_no_flows_when_storage_is_empty() {
     let directory = tempfile::tempdir().unwrap();
-    let output = run_cli(directory.path(), &["list"]);
+    let output = run_cli(directory.path(), &["list", "flows"]);
     assert!(output.status.success());
     assert_eq!(String::from_utf8_lossy(&output.stdout), "no flows found\n");
 }
@@ -516,8 +516,8 @@ fn lists_no_flows_when_storage_is_empty() {
 fn lists_flows_with_summaries_and_local_shadowing() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let local = root.join(".flows/workflow.toml");
-    let global = root.join("global/flows/workflow.toml");
+    let local = root.join(".flow/workflow.toml");
+    let global = root.join("global/flow/workflow.toml");
     write_flow(&local);
     write_flow(&global);
     fs::write(
@@ -526,9 +526,9 @@ fn lists_flows_with_summaries_and_local_shadowing() {
     )
     .unwrap();
     fs::write(&global, "invalid TOML = ").unwrap();
-    write_flow(&root.join("global/flows/other.toml"));
+    write_flow(&root.join("global/flow/other.toml"));
 
-    let output = run_cli(root, &["list"]);
+    let output = run_cli(root, &["list", "flows"]);
     assert!(
         output.status.success(),
         "{}",
@@ -544,7 +544,7 @@ fn lists_flows_with_summaries_and_local_shadowing() {
 fn lists_steps_with_summaries_in_flow_order() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let path = root.join(".flows/workflow.toml");
+    let path = root.join(".flow/workflow.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "initial_step = 'Draft'\n[[steps]]\nname = 'Draft'\nsummary = 'Start here'\n[[steps]]\nname = 'Review'\n").unwrap();
 
@@ -564,7 +564,7 @@ fn lists_steps_with_summaries_in_flow_order() {
 fn status_displays_flow_step_and_next_step_metadata() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let flow_path = root.join(".flows/workflow.toml");
+    let flow_path = root.join(".flow/workflow.toml");
     fs::create_dir_all(flow_path.parent().unwrap()).unwrap();
     fs::write(
         &flow_path,
@@ -591,7 +591,7 @@ fn status_displays_flow_step_and_next_step_metadata() {
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
 
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     assert!(
         status.status.success(),
         "{}",
@@ -632,7 +632,7 @@ fn status_displays_flow_step_and_next_step_metadata() {
 fn status_preview_shows_selected_guidance_without_changing_instance() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let path = root.join(".flows/workflow.toml");
+    let path = root.join(".flow/workflow.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         &path,
@@ -663,14 +663,14 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        run_cli(root, &["autonomy", "set", "run", "steered", "Review"])
+        run_cli(root, &["autonomy", "set", "run", "steered", "--step", "Review"])
             .status
             .success()
     );
-    let instance_path = root.join(".flows/instances/run.toml");
+    let instance_path = root.join(".flow/instances/run.toml");
     let before = fs::read(&instance_path).unwrap();
-    let current = run_cli(root, &["status", "run"]).stdout;
-    let preview = run_cli(root, &["status", "run", "Review"]);
+    let current = run_cli(root, &["show", "run"]).stdout;
+    let preview = run_cli(root, &["show", "run", "--step", "Review"]);
     assert!(
         preview.status.success(),
         "{}",
@@ -704,10 +704,10 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
     "}
     );
     assert_eq!(fs::read(&instance_path).unwrap(), before);
-    let future_final = String::from_utf8(run_cli(root, &["status", "run", "Done"]).stdout).unwrap();
-    assert!(!future_final.contains("flows complete"), "{future_final}");
-    assert_eq!(run_cli(root, &["status", "run"]).stdout, current);
-    let invalid = run_cli(root, &["status", "run", "Unknown"]);
+    let future_final = String::from_utf8(run_cli(root, &["show", "run", "--step", "Done"]).stdout).unwrap();
+    assert!(!future_final.contains("flow complete"), "{future_final}");
+    assert_eq!(run_cli(root, &["show", "run"]).stdout, current);
+    let invalid = run_cli(root, &["show", "run", "--step", "Unknown"]);
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("unknown step \"Unknown\""));
     assert!(invalid.stdout.is_empty());
@@ -718,7 +718,7 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
 fn status_preview_respects_final_and_skip_overrides() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let flow_path = root.join(".flows/workflow.toml");
+    let flow_path = root.join(".flow/workflow.toml");
     fs::create_dir_all(flow_path.parent().unwrap()).unwrap();
     fs::write(
         &flow_path,
@@ -738,13 +738,13 @@ fn status_preview_respects_final_and_skip_overrides() {
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        run_cli(root, &["step-overrides", "skip", "run", "Review"])
+        run_cli(root, &["route", "skip", "run", "Review"])
             .status
             .success()
     );
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     let before = fs::read(&path).unwrap();
-    let preview = run_cli(root, &["status", "run", "Design"]);
+    let preview = run_cli(root, &["show", "run", "--step", "Design"]);
     let text = String::from_utf8_lossy(&preview.stdout);
     assert!(preview.status.success(), "{text}");
     assert!(
@@ -756,23 +756,21 @@ fn status_preview_respects_final_and_skip_overrides() {
     assert_eq!(fs::read(&path).unwrap(), before);
 
     assert!(
-        run_cli(root, &["step-overrides", "final", "add", "run", "Design"])
+        run_cli(root, &["route", "final", "add", "run", "Design"])
             .status
             .success()
     );
     let before = fs::read(&path).unwrap();
-    let preview = run_cli(root, &["status", "run", "Design"]);
+    let preview = run_cli(root, &["show", "run", "--step", "Design"]);
     let text = String::from_utf8_lossy(&preview.stdout);
     assert!(preview.status.success(), "{text}");
     assert!(
-        text.contains(
-            "Next steps:\n  This is the final step. Run `flows complete run` to complete the flow."
-        ),
+        text.contains("Next steps:\n  This is the final step. Run `flow complete run` to complete the flow."),
         "{text}"
     );
     assert_eq!(fs::read(&path).unwrap(), before);
     // A preview of another step must not inherit the current step's final override.
-    let other = run_cli(root, &["status", "run", "Review"]);
+    let other = run_cli(root, &["show", "run", "--step", "Review"]);
     let text = String::from_utf8_lossy(&other.stdout);
     assert!(other.status.success(), "{text}");
     assert!(
@@ -786,7 +784,7 @@ fn status_preview_respects_final_and_skip_overrides() {
 #[test]
 fn status_reports_when_no_instances_exist() {
     let directory = tempfile::tempdir().unwrap();
-    let status = run_cli(directory.path(), &["status"]);
+    let status = run_cli(directory.path(), &["list", "instances"]);
     assert!(
         status.status.success(),
         "{}",
@@ -796,7 +794,7 @@ fn status_reports_when_no_instances_exist() {
 }
 
 fn write_branching_flow(root: &Path) {
-    let path = root.join(".flows/workflow.toml");
+    let path = root.join(".flow/workflow.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         path,
@@ -820,48 +818,58 @@ fn write_branching_flow(root: &Path) {
 }
 
 #[test]
-fn next_without_target_uses_transition_order_and_preserves_explicit_output() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path();
-    write_branching_flow(root);
-    for name in ["run", "other"] {
-        assert!(run_cli(root, &["start", "workflow", name]).status.success());
-    }
-    let path = root.join(".flows/instances/run.toml");
-    let implicit = run_cli(root, &["next", "run"]);
-    assert!(
-        implicit.status.success(),
-        "{}",
-        String::from_utf8_lossy(&implicit.stderr)
-    );
-    let saved = fs::read(&path).unwrap();
-    assert!(String::from_utf8_lossy(&saved).contains("step = \"First\""));
-    assert!(run_cli(root, &["jump", "run", "Start"]).status.success());
-    let explicit = run_cli(root, &["next", "run", "First"]);
-    assert!(explicit.status.success());
-    assert_eq!(implicit.stdout, explicit.stdout);
-    assert_eq!(saved, fs::read(path).unwrap());
-}
-
-#[test]
-fn next_without_target_expands_the_first_skipped_branch_before_later_branches() {
+fn next_without_target_rejects_ambiguity_without_mutation() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_branching_flow(root);
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    let path = root.join(".flow/instances/run.toml");
+    let before = fs::read(&path).unwrap();
+    let implicit = run_cli(root, &["next", "run"]);
+    assert!(!implicit.status.success());
+    let error = String::from_utf8_lossy(&implicit.stderr);
+    assert!(error.contains("First") && error.contains("Second"), "{error}");
+    assert_eq!(before, fs::read(&path).unwrap());
+    assert!(run_cli(root, &["next", "run", "First"]).status.success());
+}
+
+#[test]
+fn next_ambiguity_counts_effective_destinations_after_skips() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_branching_flow(root);
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    assert!(run_cli(root, &["route", "skip", "run", "First"]).status.success());
+    let path = root.join(".flow/instances/run.toml");
+    let before = fs::read(&path).unwrap();
+    let next = run_cli(root, &["next", "run"]);
+    assert!(!next.status.success());
+    let error = String::from_utf8_lossy(&next.stderr);
+    assert!(error.contains("Expanded") && error.contains("Second"), "{error}");
+    assert_eq!(before, fs::read(&path).unwrap());
     assert!(
-        run_cli(root, &["step-overrides", "skip", "run", "First"])
+        !run_cli(root, &["route", "skip", "run", "Expanded"])
             .status
             .success()
     );
-    let next = run_cli(root, &["next", "run"]);
-    assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
-    assert!(String::from_utf8_lossy(&next.stdout).contains("step: Expanded"));
-    assert!(
-        fs::read_to_string(root.join(".flows/instances/run.toml"))
-            .unwrap()
-            .contains("step = \"Expanded\"")
-    );
+    assert!(run_cli(root, &["next", "run", "Expanded"]).status.success());
+}
+
+#[test]
+fn next_without_target_matches_explicit_single_destination() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_movable_flow(&root.join(".flow/workflow.toml"));
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    let implicit = run_cli(root, &["next", "run"]);
+    assert!(implicit.status.success());
+    let path = root.join(".flow/instances/run.toml");
+    let after = fs::read(&path).unwrap();
+    assert!(run_cli(root, &["jump", "run", "Design"]).status.success());
+    let explicit = run_cli(root, &["next", "run", "Review"]);
+    assert!(explicit.status.success());
+    assert_eq!(implicit.stdout, explicit.stdout);
+    assert_eq!(after, fs::read(&path).unwrap());
 }
 
 #[test]
@@ -870,7 +878,7 @@ fn next_explicit_nonfirst_target_and_invalid_target_keep_existing_behavior() {
     let root = directory.path();
     write_branching_flow(root);
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     let before = fs::read(&path).unwrap();
     let invalid = run_cli(root, &["next", "run", "Expanded"]);
     assert!(!invalid.status.success());
@@ -887,16 +895,16 @@ fn next_explicit_nonfirst_target_and_invalid_target_keep_existing_behavior() {
 fn next_without_target_at_terminal_or_custom_final_does_not_modify_storage() {
     for setup in [
         &["jump", "run", "Review"][..],
-        &["step-overrides", "final", "add", "run", "Design"],
+        &["route", "final", "add", "run", "Design"],
     ] {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        write_movable_flow(&root.join(".flows/workflow.toml"));
+        write_movable_flow(&root.join(".flow/workflow.toml"));
         assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
         assert!(run_cli(root, setup).status.success());
-        let path = root.join(".flows/instances/run.toml");
+        let path = root.join(".flow/instances/run.toml");
         let before = fs::read(&path).unwrap();
-        let flow_before = fs::read(root.join(".flows/workflow.toml")).unwrap();
+        let flow_before = fs::read(root.join(".flow/workflow.toml")).unwrap();
         let next = run_cli(root, &["next", "run"]);
         assert!(!next.status.success());
         assert!(
@@ -904,7 +912,7 @@ fn next_without_target_at_terminal_or_custom_final_does_not_modify_storage() {
         );
         assert!(next.stdout.is_empty());
         assert_eq!(before, fs::read(path).unwrap());
-        assert_eq!(flow_before, fs::read(root.join(".flows/workflow.toml")).unwrap());
+        assert_eq!(flow_before, fs::read(root.join(".flow/workflow.toml")).unwrap());
     }
 }
 
@@ -912,19 +920,19 @@ fn next_without_target_at_terminal_or_custom_final_does_not_modify_storage() {
 fn next_and_jump_persist_local_instance_step() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
 
     let next = run_cli(root, &["next", "run", "Review"]);
     assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
-    let loaded = run_cli(root, &["status", "run"]);
+    let loaded = run_cli(root, &["show", "run"]);
     assert!(loaded.status.success());
     assert!(String::from_utf8_lossy(&loaded.stdout).contains("step: Review"));
 
     let jump = run_cli(root, &["jump", "run", "Done"]);
     assert!(jump.status.success(), "{}", String::from_utf8_lossy(&jump.stderr));
     assert_eq!(
-        fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap(),
+        fs::read_to_string(root.join(".flow/instances/run.toml")).unwrap(),
         indoc! {r#"
             flow = "workflow"
             step = "Done"
@@ -941,9 +949,9 @@ fn next_and_jump_persist_local_instance_step() {
 fn context_updates_survive_moves_and_appear_in_status() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     assert!(!fs::read_to_string(&path).unwrap().contains("[context]"));
 
     for args in [
@@ -966,7 +974,7 @@ fn context_updates_survive_moves_and_appear_in_status() {
         Some("line 1\nline 2")
     );
 
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     assert!(status.status.success());
     let output = String::from_utf8_lossy(&status.stdout);
     assert!(output.contains("context:\n"), "{output}");
@@ -991,7 +999,7 @@ fn context_updates_survive_moves_and_appear_in_status() {
 fn context_values_are_limited_to_150_characters() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
 
     let exact_limit = "a".repeat(150);
@@ -1006,7 +1014,7 @@ fn context_values_are_limited_to_150_characters() {
     assert!(error.contains("compact reminders and pointers"), "{error}");
 
     let saved: toml::Value =
-        toml::from_str(&fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap()).unwrap();
+        toml::from_str(&fs::read_to_string(root.join(".flow/instances/run.toml")).unwrap()).unwrap();
     assert_eq!(saved["context"]["plan"].as_str(), Some(exact_limit.as_str()));
 }
 
@@ -1014,10 +1022,22 @@ fn context_values_are_limited_to_150_characters() {
 fn autonomy_range_is_persisted_per_step_and_follows_moves() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
 
-    let range = run_cli(root, &["autonomy", "set", "run", "steered", "Design", "Review"]);
+    let range = run_cli(
+        root,
+        &[
+            "autonomy",
+            "set",
+            "run",
+            "steered",
+            "--from",
+            "Design",
+            "--through",
+            "Review",
+        ],
+    );
     assert!(
         range.status.success(),
         "{}",
@@ -1027,7 +1047,10 @@ fn autonomy_range_is_persisted_per_step_and_follows_moves() {
         String::from_utf8_lossy(&range.stdout),
         format!("set autonomy to steered for steps:\n  - Design\n  - Review\n{AUTONOMY_HINT}")
     );
-    let single = run_cli(root, &["autonomy", "set", "run", "autonomous", "Review"]);
+    let single = run_cli(
+        root,
+        &["autonomy", "set", "run", "autonomous", "--step", "Review"],
+    );
     assert!(
         single.status.success(),
         "{}",
@@ -1038,16 +1061,16 @@ fn autonomy_range_is_persisted_per_step_and_follows_moves() {
         String::from_utf8_lossy(&single.stdout),
         format!("set autonomy to autonomous for steps:\n  - Review\n{AUTONOMY_HINT}")
     );
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(saved["autonomy"]["Design"].as_str(), Some("steered"));
     assert_eq!(saved["autonomy"]["Review"].as_str(), Some("autonomous"));
     assert_eq!(saved["autonomy"]["Done"].as_str(), Some("guided"));
 
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     assert!(String::from_utf8_lossy(&status.stdout).contains("current step: Design\nautonomy: steered ("));
     assert!(run_cli(root, &["next", "run", "Review"]).status.success());
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     let output = String::from_utf8_lossy(&status.stdout);
     assert!(
         output.contains("current step: Review\nautonomy: autonomous ("),
@@ -1059,7 +1082,7 @@ fn autonomy_range_is_persisted_per_step_and_follows_moves() {
     );
     assert!(run_cli(root, &["jump", "run", "Done"]).status.success());
     assert!(
-        String::from_utf8_lossy(&run_cli(root, &["status", "run"]).stdout)
+        String::from_utf8_lossy(&run_cli(root, &["show", "run"]).stdout)
             .contains("current step: Done\nautonomy: guided (")
     );
 }
@@ -1068,7 +1091,7 @@ fn autonomy_range_is_persisted_per_step_and_follows_moves() {
 fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let path = root.join(".flows/workflow.toml");
+    let path = root.join(".flow/workflow.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         &path,
@@ -1102,7 +1125,19 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
 
-    let range = run_cli(root, &["autonomy", "set", "run", "steered", "Start", "End"]);
+    let range = run_cli(
+        root,
+        &[
+            "autonomy",
+            "set",
+            "run",
+            "steered",
+            "--from",
+            "Start",
+            "--through",
+            "End",
+        ],
+    );
     assert!(
         range.status.success(),
         "{}",
@@ -1115,7 +1150,7 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
         )
     );
     let saved: toml::Value =
-        toml::from_str(&fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap()).unwrap();
+        toml::from_str(&fs::read_to_string(root.join(".flow/instances/run.toml")).unwrap()).unwrap();
     for name in ["End", "Right", "Start", "Loop", "Left"] {
         assert_eq!(saved["autonomy"][name].as_str(), Some("steered"), "{name}");
     }
@@ -1123,17 +1158,41 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
         assert_eq!(saved["autonomy"][name].as_str(), Some("guided"), "{name}");
     }
 
-    let same = run_cli(root, &["autonomy", "set", "run", "autonomous", "End", "End"]);
+    let same = run_cli(
+        root,
+        &[
+            "autonomy",
+            "set",
+            "run",
+            "autonomous",
+            "--from",
+            "End",
+            "--through",
+            "End",
+        ],
+    );
     assert_eq!(
         String::from_utf8_lossy(&same.stdout),
         format!("set autonomy to autonomous for steps:\n  - End\n{AUTONOMY_HINT}")
     );
-    let original = fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap();
-    let unreachable = run_cli(root, &["autonomy", "set", "run", "steered", "Start", "Unrelated"]);
+    let original = fs::read_to_string(root.join(".flow/instances/run.toml")).unwrap();
+    let unreachable = run_cli(
+        root,
+        &[
+            "autonomy",
+            "set",
+            "run",
+            "steered",
+            "--from",
+            "Start",
+            "--through",
+            "Unrelated",
+        ],
+    );
     assert!(!unreachable.status.success());
     assert!(String::from_utf8_lossy(&unreachable.stderr).contains("no next path"));
     assert_eq!(
-        fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap(),
+        fs::read_to_string(root.join(".flow/instances/run.toml")).unwrap(),
         original
     );
 }
@@ -1142,26 +1201,44 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
 fn autonomy_rejects_invalid_ranges_without_changing_instance() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     let original = fs::read_to_string(&path).unwrap();
 
     for (args, message) in [
         (
-            vec!["autonomy", "set", "run", "steered", "Done", "Design"],
+            vec![
+                "autonomy",
+                "set",
+                "run",
+                "steered",
+                "--from",
+                "Done",
+                "--through",
+                "Design",
+            ],
             "no next path",
         ),
         (
-            vec!["autonomy", "set", "run", "steered", "Missing"],
+            vec!["autonomy", "set", "run", "steered", "--step", "Missing"],
             "unknown step",
         ),
         (
-            vec!["autonomy", "set", "run", "steered", "Design", "Missing"],
+            vec![
+                "autonomy",
+                "set",
+                "run",
+                "steered",
+                "--from",
+                "Design",
+                "--through",
+                "Missing",
+            ],
             "unknown step",
         ),
         (
-            vec!["autonomy", "set", "run", "unsupervised", "Design"],
+            vec!["autonomy", "set", "run", "unsupervised", "--step", "Design"],
             "Matching variant not found",
         ),
     ] {
@@ -1176,7 +1253,7 @@ fn autonomy_rejects_invalid_ranges_without_changing_instance() {
 fn autonomy_updates_global_instance_and_handles_step_names_with_spaces() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let flow = root.join("global/flows/workflow.toml");
+    let flow = root.join("global/flow/workflow.toml");
     fs::create_dir_all(flow.parent().unwrap()).unwrap();
     fs::write(
         &flow,
@@ -1189,14 +1266,17 @@ fn autonomy_updates_global_instance_and_handles_step_names_with_spaces() {
             .success()
     );
 
-    let set = run_cli(root, &["autonomy", "set", "run", "steered", "In Progress"]);
+    let set = run_cli(
+        root,
+        &["autonomy", "set", "run", "steered", "--step", "In Progress"],
+    );
     assert!(set.status.success(), "{}", String::from_utf8_lossy(&set.stderr));
-    assert!(!root.join(".flows/instances/run.toml").exists());
-    let saved = fs::read_to_string(root.join("global/flows/instances/run.toml")).unwrap();
+    assert!(!root.join(".flow/instances/run.toml").exists());
+    let saved = fs::read_to_string(root.join("global/flow/instances/run.toml")).unwrap();
     let document: toml::Value = toml::from_str(&saved).unwrap();
     assert_eq!(document["autonomy"]["In Progress"].as_str(), Some("steered"));
     assert!(
-        String::from_utf8_lossy(&run_cli(root, &["status", "run"]).stdout)
+        String::from_utf8_lossy(&run_cli(root, &["show", "run"]).stdout)
             .contains("current step: In Progress\nautonomy: steered (")
     );
 }
@@ -1205,16 +1285,16 @@ fn autonomy_updates_global_instance_and_handles_step_names_with_spaces() {
 fn legacy_instances_gain_guided_autonomy_for_every_step() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
-    let path = root.join(".flows/instances/run.toml");
+    write_movable_flow(&root.join(".flow/workflow.toml"));
+    let path = root.join(".flow/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
 
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     assert!(status.status.success());
     assert!(String::from_utf8_lossy(&status.stdout).contains("autonomy: guided"));
     assert!(
-        run_cli(root, &["autonomy", "set", "run", "steered", "Review"])
+        run_cli(root, &["autonomy", "set", "run", "steered", "--step", "Review"])
             .status
             .success()
     );
@@ -1230,7 +1310,7 @@ fn removing_missing_context_does_not_change_instance() {
     let root = directory.path();
     write_local_flow(root);
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     let original = fs::read_to_string(&path).unwrap();
 
     let result = run_cli(root, &["context", "remove", "run", "missing"]);
@@ -1256,8 +1336,8 @@ fn context_updates_global_instance_in_place() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    assert!(!root.join(".flows/instances/run.toml").exists());
-    let saved = fs::read_to_string(root.join("global/flows/instances/run.toml")).unwrap();
+    assert!(!root.join(".flow/instances/run.toml").exists());
+    let saved = fs::read_to_string(root.join("global/flow/instances/run.toml")).unwrap();
     let document: toml::Value = toml::from_str(&saved).unwrap();
     assert_eq!(document["context"]["goal"].as_str(), Some("finish"));
 }
@@ -1266,9 +1346,9 @@ fn context_updates_global_instance_in_place() {
 fn rejected_moves_leave_instance_file_unchanged() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     let original = fs::read_to_string(&path).unwrap();
 
     let next = run_cli(root, &["next", "run", "Done"]);
@@ -1284,7 +1364,7 @@ fn rejected_moves_leave_instance_file_unchanged() {
 fn movement_updates_global_instance_without_creating_a_local_one() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join("global/flows/workflow.toml"));
+    write_movable_flow(&root.join("global/flow/workflow.toml"));
     assert!(
         run_cli(root, &["start", "workflow", "run", "-g"])
             .status
@@ -1293,9 +1373,9 @@ fn movement_updates_global_instance_without_creating_a_local_one() {
 
     let next = run_cli(root, &["next", "run", "Review"]);
     assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
-    assert!(!root.join(".flows/instances/run.toml").exists());
+    assert!(!root.join(".flow/instances/run.toml").exists());
     assert!(
-        fs::read_to_string(root.join("global/flows/instances/run.toml"))
+        fs::read_to_string(root.join("global/flow/instances/run.toml"))
             .unwrap()
             .contains("step = \"Review\"")
     );
@@ -1306,14 +1386,14 @@ fn new_rejects_collision_in_global_scope() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    let existing = root.join("global/flows/instances/run.toml");
+    let existing = root.join("global/flow/instances/run.toml");
     fs::create_dir_all(existing.parent().unwrap()).unwrap();
     fs::write(&existing, "original").unwrap();
 
     let output = run_cli(root, &["start", "workflow", "run"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
-    assert!(!root.join(".flows/instances/run.toml").exists());
+    assert!(!root.join(".flow/instances/run.toml").exists());
     assert_eq!(fs::read_to_string(existing).unwrap(), "original");
 }
 
@@ -1325,7 +1405,7 @@ fn new_requires_flow_before_creating_instance_file() {
     let output = run_cli(root, &["start", "workflow", "run"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("flow \"workflow\" not found"));
-    assert!(!root.join(".flows/instances").exists());
+    assert!(!root.join(".flow/instances").exists());
 }
 
 #[test]
@@ -1355,12 +1435,12 @@ fn new_generates_flow_prefixed_instance_name_that_can_be_loaded() {
             .all(|character| character.is_ascii_hexdigit())
     );
     assert!(
-        root.join(".flows/instances")
+        root.join(".flow/instances")
             .join(format!("{name}.toml"))
             .is_file()
     );
 
-    let loaded = run_cli(root, &["status", name]);
+    let loaded = run_cli(root, &["show", name]);
     assert!(
         loaded.status.success(),
         "{}",
@@ -1382,7 +1462,7 @@ fn new_global_creates_instance_with_global_flow() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        fs::read_to_string(root.join("global/flows/instances/run.toml")).unwrap(),
+        fs::read_to_string(root.join("global/flow/instances/run.toml")).unwrap(),
         indoc! {r#"
             flow = "workflow"
             step = "Design"
@@ -1391,8 +1471,8 @@ fn new_global_creates_instance_with_global_flow() {
             Design = "guided"
         "#}
     );
-    assert!(!root.join(".flows/instances/run.toml").exists());
-    let loaded = run_cli(root, &["status", "run"]);
+    assert!(!root.join(".flow/instances/run.toml").exists());
+    let loaded = run_cli(root, &["show", "run"]);
     assert!(
         loaded.status.success(),
         "{}",
@@ -1406,7 +1486,7 @@ fn new_copy_flow_installs_local_flow_and_creates_global_instance() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    let local_flow = root.join(".flows/workflow.toml");
+    let local_flow = root.join(".flow/workflow.toml");
 
     let output = run_cli(root, &["start", "workflow", "run", "-G"]);
     assert!(
@@ -1415,11 +1495,11 @@ fn new_copy_flow_installs_local_flow_and_creates_global_instance() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        fs::read_to_string(root.join("global/flows/workflow.toml")).unwrap(),
+        fs::read_to_string(root.join("global/flow/workflow.toml")).unwrap(),
         fs::read_to_string(local_flow).unwrap()
     );
-    assert!(!root.join(".flows/instances/run.toml").exists());
-    let loaded = run_cli(root, &["status", "run"]);
+    assert!(!root.join(".flow/instances/run.toml").exists());
+    let loaded = run_cli(root, &["show", "run"]);
     assert!(
         loaded.status.success(),
         "{}",
@@ -1432,7 +1512,7 @@ fn new_copy_flow_keeps_existing_global_flow() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    let global_flow = root.join("global/flows/workflow.toml");
+    let global_flow = root.join("global/flow/workflow.toml");
     fs::create_dir_all(global_flow.parent().unwrap()).unwrap();
     let existing = indoc! {r#"
         initial_step = "Review"
@@ -1449,7 +1529,36 @@ fn new_copy_flow_keeps_existing_global_flow() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fs::read_to_string(global_flow).unwrap(), existing);
-    assert!(root.join("global/flows/instances/run.toml").is_file());
+    assert!(root.join("global/flow/instances/run.toml").is_file());
+}
+
+#[test]
+fn start_rejects_conflicting_global_flags_without_writes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_local_flow(root);
+    let flow_path = root.join(".flow/workflow.toml");
+    let before = fs::read(&flow_path).unwrap();
+
+    for flags in [
+        ["--global", "--copy-flow"],
+        ["--copy-flow", "--global"],
+        ["-g", "-G"],
+        ["-G", "-g"],
+    ] {
+        let output = run_cli(root, &["start", "workflow", "run", flags[0], flags[1]]);
+        assert!(!output.status.success(), "{flags:?}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("cannot be used with"), "{error}");
+        assert!(
+            error.contains("--global") && error.contains("--copy-flow"),
+            "{error}"
+        );
+        assert!(output.stdout.is_empty());
+        assert_eq!(fs::read(&flow_path).unwrap(), before);
+        assert_eq!(fs::read_dir(root.join(".flow")).unwrap().count(), 1);
+        assert!(!root.join("global").exists());
+    }
 }
 
 #[test]
@@ -1457,14 +1566,14 @@ fn new_copy_flow_checks_instance_collision_before_copy() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    let existing = root.join(".flows/instances/run.toml");
+    let existing = root.join(".flow/instances/run.toml");
     fs::create_dir_all(existing.parent().unwrap()).unwrap();
     fs::write(&existing, "original").unwrap();
 
     let output = run_cli(root, &["start", "workflow", "run", "-G"]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("already exists"));
-    assert!(!root.join("global/flows/workflow.toml").exists());
+    assert!(!root.join("global/flow/workflow.toml").exists());
     assert_eq!(fs::read_to_string(existing).unwrap(), "original");
 }
 
@@ -1473,14 +1582,14 @@ fn new_copy_flow_rejects_invalid_existing_global_flow() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    let global_flow = root.join("global/flows/workflow.toml");
+    let global_flow = root.join("global/flow/workflow.toml");
     fs::create_dir_all(global_flow.parent().unwrap()).unwrap();
     fs::write(&global_flow, "invalid toml = ").unwrap();
 
     let output = run_cli(root, &["start", "workflow", "run", "-G"]);
     assert!(!output.status.success());
     assert_eq!(fs::read_to_string(global_flow).unwrap(), "invalid toml = ");
-    assert!(!root.join("global/flows/instances/run.toml").exists());
+    assert!(!root.join("global/flow/instances/run.toml").exists());
 }
 
 #[test]
@@ -1493,8 +1602,8 @@ fn new_global_requires_global_flow_even_if_local_exists() {
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("global flow \"workflow\" not found"), "{error}");
-    assert!(error.contains("global/flows/workflow.toml"), "{error}");
-    assert!(!root.join("global/flows/instances/run.toml").exists());
+    assert!(error.contains("global/flow/workflow.toml"), "{error}");
+    assert!(!root.join("global/flow/instances/run.toml").exists());
 }
 
 #[test]
@@ -1509,29 +1618,29 @@ fn ownership_can_be_claimed_released_and_stopped() {
         "{}",
         String::from_utf8_lossy(&started.stderr)
     );
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(saved["owner"].as_str(), Some("agent-a"));
-    assert!(String::from_utf8_lossy(&run_cli(root, &["status"]).stdout).contains("agent-a"));
+    assert!(String::from_utf8_lossy(&run_cli(root, &["list", "instances"]).stdout).contains("agent-a"));
 
     assert!(
-        run_cli(root, &["resume", "run", "--owner", "agent-a"])
+        run_cli(root, &["claim", "run", "--owner", "agent-a"])
             .status
             .success()
     );
-    let rejected = run_cli(root, &["resume", "run", "--owner", "agent-b"]);
+    let rejected = run_cli(root, &["claim", "run", "--owner", "agent-b"]);
     assert!(!rejected.status.success());
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("owned by \"agent-a\""));
 
-    assert!(run_cli(root, &["pause", "run"]).status.success());
+    assert!(run_cli(root, &["release", "run"]).status.success());
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert!(saved.get("owner").is_none());
     assert!(
-        run_cli(root, &["resume", "run", "--owner", "agent-b"])
+        run_cli(root, &["claim", "run", "--owner", "agent-b"])
             .status
             .success()
     );
-    assert!(run_cli(root, &["stop", "run"]).status.success());
+    assert!(run_cli(root, &["delete", "run"]).status.success());
     assert!(!path.exists());
 }
 
@@ -1540,15 +1649,14 @@ fn complete_deletes_an_instance_only_at_a_terminal_step() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
 
-    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
+    let status = String::from_utf8(run_cli(root, &["show", "run"]).stdout).unwrap();
     assert!(
-        status.contains(
-            "Next steps:\n  This is the final step. Run `flows complete run` to complete the flow."
-        ),
+        status
+            .contains("Next steps:\n  This is the final step. Run `flow complete run` to complete the flow."),
         "{status}"
     );
     let completed = run_cli(root, &["complete", "run"]);
@@ -1565,8 +1673,8 @@ fn complete_deletes_an_instance_only_at_a_terminal_step() {
 fn complete_preserves_an_instance_with_available_next_steps() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
-    let path = root.join(".flows/instances/run.toml");
+    write_movable_flow(&root.join(".flow/workflow.toml"));
+    let path = root.join(".flow/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
 
@@ -1580,11 +1688,11 @@ fn complete_preserves_an_instance_with_available_next_steps() {
 fn stop_can_delete_an_instance_when_its_flow_is_missing() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "flow = 'missing'\nstep = 'Unknown'\n").unwrap();
 
-    let stopped = run_cli(root, &["stop", "run"]);
+    let stopped = run_cli(root, &["delete", "run"]);
     assert!(
         stopped.status.success(),
         "{}",
@@ -1598,21 +1706,21 @@ fn new_global_rejects_invalid_global_flow() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
-    let global_flow = root.join("global/flows/workflow.toml");
+    let global_flow = root.join("global/flow/workflow.toml");
     fs::create_dir_all(global_flow.parent().unwrap()).unwrap();
     fs::write(&global_flow, "invalid toml = ").unwrap();
 
     let output = run_cli(root, &["start", "workflow", "run", "-g"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("global/flows/workflow.toml"));
-    assert!(!root.join("global/flows/instances/run.toml").exists());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("global/flow/workflow.toml"));
+    assert!(!root.join("global/flow/instances/run.toml").exists());
 }
 
 #[test]
 fn instance_configuration_persists_and_controls_status_next_jump_and_complete() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let flow = root.join(".flows/workflow.toml");
+    let flow = root.join(".flow/workflow.toml");
     fs::create_dir_all(flow.parent().unwrap()).unwrap();
     fs::write(
         &flow,
@@ -1634,16 +1742,13 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
     "#},
     )
     .unwrap();
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
         !fs::read_to_string(&path).unwrap().contains("[step_overrides]"),
         "empty overrides should not be serialized"
     );
-    for args in [
-        &["step-overrides", "skip", "run", "A"][..],
-        &["step-overrides", "skip", "run", "B"],
-    ] {
+    for args in [&["route", "skip", "run", "A"][..], &["route", "skip", "run", "B"]] {
         let result = run_cli(root, args);
         assert!(
             result.status.success(),
@@ -1654,12 +1759,12 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(saved["step_overrides"]["skipped"].as_array().unwrap().len(), 2);
     assert!(saved.get("skipped").is_none(), "{saved}");
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     let text = String::from_utf8_lossy(&status.stdout);
     assert!(text.contains("Next steps:\n  - Finish\n"), "{text}");
     assert!(!run_cli(root, &["next", "run", "A"]).status.success());
     assert!(!run_cli(root, &["jump", "run", "B"]).status.success());
-    assert!(run_cli(root, &["next", "run", "Finish"]).status.success());
+    assert!(run_cli(root, &["next", "run"]).status.success());
     assert!(run_cli(root, &["complete", "run"]).status.success());
     assert!(!path.exists());
 }
@@ -1668,11 +1773,11 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
 fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouched() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     assert!(
-        run_cli(root, &["step-overrides", "initial", "run", "Review"])
+        run_cli(root, &["route", "initial", "set", "run", "Review"])
             .status
             .success()
     );
@@ -1680,15 +1785,23 @@ fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouc
     let saved: toml::Value = toml::from_str(&contents).unwrap();
     assert_eq!(saved["step_overrides"]["initial"].as_str(), Some("Review"));
     assert!(saved.get("initial").is_none(), "{contents}");
-    assert_eq!(saved["step"].as_str(), Some("Review"));
+    assert_eq!(saved["step"].as_str(), Some("Design"));
+    assert!(run_cli(root, &["reset", "run"]).status.success());
+    assert!(
+        String::from_utf8_lossy(&run_cli(root, &["show", "run"]).stdout).contains("current step: Review")
+    );
     assert!(run_cli(root, &["jump", "run", "Design"]).status.success());
     assert!(
-        run_cli(root, &["step-overrides", "initial", "run", "Review"])
+        run_cli(root, &["route", "initial", "set", "run", "Review"])
             .status
             .success()
     );
     assert!(
-        run_cli(root, &["step-overrides", "final", "add", "run", "Review"])
+        String::from_utf8_lossy(&run_cli(root, &["show", "run"]).stdout).contains("current step: Design")
+    );
+    assert!(run_cli(root, &["reset", "run"]).status.success());
+    assert!(
+        run_cli(root, &["route", "final", "add", "run", "Review"])
             .status
             .success()
     );
@@ -1698,62 +1811,61 @@ fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouc
         Some("Review")
     );
     assert!(saved.get("finals").is_none(), "{saved}");
-    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
+    let status = String::from_utf8(run_cli(root, &["show", "run"]).stdout).unwrap();
     assert!(
-        status.contains(
-            "Next steps:\n  This is the final step. Run `flows complete run` to complete the flow."
-        ),
+        status
+            .contains("Next steps:\n  This is the final step. Run `flow complete run` to complete the flow."),
         "{status}"
     );
     assert!(
-        run_cli(root, &["step-overrides", "final", "remove", "run", "Review"])
+        run_cli(root, &["route", "final", "remove", "run", "Review"])
             .status
             .success()
     );
     assert!(
-        run_cli(root, &["step-overrides", "initial", "run", "Design"])
+        run_cli(root, &["route", "initial", "set", "run", "Design"])
             .status
             .success()
     );
     let contents = fs::read_to_string(&path).unwrap();
     assert!(!contents.contains("[step_overrides]"), "{contents}");
     for args in [
-        &["step-overrides", "skip", "run", "Design"][..],
-        &["step-overrides", "skip", "run", "Missing"],
-        &["step-overrides", "initial", "run", "Missing"],
-        &["step-overrides", "final", "remove", "run", "Review"],
-        &["step-overrides", "unskip", "run", "Review"],
+        &["route", "skip", "run", "Design"][..],
+        &["route", "skip", "run", "Missing"],
+        &["route", "initial", "set", "run", "Missing"],
+        &["route", "final", "remove", "run", "Review"],
+        &["route", "unskip", "run", "Review"],
     ] {
         let before = fs::read(&path).unwrap();
         assert!(!run_cli(root, args).status.success(), "{args:?}");
         assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
     }
     assert!(
-        run_cli(root, &["step-overrides", "final", "add", "run", "Review"])
+        run_cli(root, &["route", "final", "add", "run", "Review"])
             .status
             .success()
     );
     let before = fs::read(&path).unwrap();
     assert!(
-        !run_cli(root, &["step-overrides", "skip", "run", "Review"])
+        !run_cli(root, &["route", "skip", "run", "Review"])
             .status
             .success()
     );
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(
-        run_cli(root, &["step-overrides", "final", "remove", "run", "Review"])
+        run_cli(root, &["route", "final", "remove", "run", "Review"])
             .status
             .success()
     );
     let before = fs::read(&path).unwrap();
     assert!(
-        !run_cli(root, &["step-overrides", "skip", "run", "Review"])
+        !run_cli(root, &["route", "skip", "run", "Review"])
             .status
             .success()
     );
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(
-        run_cli(root, &["step-overrides", "initial", "run", "Review"])
+        run_cli(root, &["route", "initial", "set", "run", "Review"])
             .status
             .success()
     );
@@ -1763,22 +1875,22 @@ fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouc
 fn custom_final_allows_completion_despite_flow_transitions() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
+    write_movable_flow(&root.join(".flow/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        run_cli(root, &["step-overrides", "final", "add", "run", "Design"])
+        run_cli(root, &["route", "final", "add", "run", "Design"])
             .status
             .success()
     );
     assert!(run_cli(root, &["complete", "run"]).status.success());
-    assert!(!root.join(".flows/instances/run.toml").exists());
+    assert!(!root.join(".flow/instances/run.toml").exists());
 }
 
 #[test]
 fn skipped_cycle_does_not_make_a_nonfinal_step_completable() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let flow = root.join(".flows/workflow.toml");
+    let flow = root.join(".flow/workflow.toml");
     fs::create_dir_all(flow.parent().unwrap()).unwrap();
     fs::write(
         &flow,
@@ -1786,14 +1898,10 @@ fn skipped_cycle_does_not_make_a_nonfinal_step_completable() {
     )
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
-    assert!(
-        run_cli(root, &["step-overrides", "skip", "run", "Loop"])
-            .status
-            .success()
-    );
-    let path = root.join(".flows/instances/run.toml");
+    assert!(run_cli(root, &["route", "skip", "run", "Loop"]).status.success());
+    let path = root.join(".flow/instances/run.toml");
     let before = fs::read(&path).unwrap();
-    let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
+    let status = String::from_utf8(run_cli(root, &["show", "run"]).stdout).unwrap();
     assert!(!status.contains("This is the final step"), "{status}");
     let next = run_cli(root, &["next", "run"]);
     assert!(!next.status.success());
@@ -1808,23 +1916,23 @@ fn skipped_cycle_does_not_make_a_nonfinal_step_completable() {
 fn old_instance_without_overrides_loads_and_nested_overrides_round_trip() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    let flow = root.join(".flows/workflow.toml");
+    let flow = root.join(".flow/workflow.toml");
     fs::create_dir_all(flow.parent().unwrap()).unwrap();
     fs::write(&flow, "initial_step = 'Design'\n[[steps]]\nname = 'Design'\nnext = ['Review']\n[[steps]]\nname = 'Review'\nnext = ['Done']\n[[steps]]\nname = 'Done'\n").unwrap();
-    let path = root.join(".flows/instances/run.toml");
+    let path = root.join(".flow/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
-    assert!(run_cli(root, &["status", "run"]).status.success());
+    assert!(run_cli(root, &["show", "run"]).status.success());
     assert!(
-        run_cli(root, &["resume", "run", "--owner", "operator"])
+        run_cli(root, &["claim", "run", "--owner", "operator"])
             .status
             .success()
     );
     assert!(!fs::read_to_string(&path).unwrap().contains("[step_overrides]"));
     fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n[step_overrides]\ninitial = 'Done'\nfinals = ['Design']\nskipped = ['Review']\n").unwrap();
-    assert!(run_cli(root, &["status", "run"]).status.success());
+    assert!(run_cli(root, &["show", "run"]).status.success());
     assert!(
-        run_cli(root, &["step-overrides", "initial", "run", "Done"])
+        run_cli(root, &["route", "initial", "set", "run", "Done"])
             .status
             .success()
     );
@@ -1835,7 +1943,7 @@ fn old_instance_without_overrides_loads_and_nested_overrides_round_trip() {
         Some("Review")
     );
     assert!(
-        run_cli(root, &["step-overrides", "unskip", "run", "Review"])
+        run_cli(root, &["route", "unskip", "run", "Review"])
             .status
             .success()
     );
@@ -1857,8 +1965,8 @@ fn old_instance_without_overrides_loads_and_nested_overrides_round_trip() {
 fn invalid_persisted_instance_configuration_is_rejected_on_load() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
-    write_movable_flow(&root.join(".flows/workflow.toml"));
-    let path = root.join(".flows/instances/run.toml");
+    write_movable_flow(&root.join(".flow/workflow.toml"));
+    let path = root.join(".flow/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     for extra in [
         "initial = 'Missing'\n",
@@ -1873,11 +1981,152 @@ fn invalid_persisted_instance_configuration_is_rejected_on_load() {
             format!("flow = 'workflow'\nstep = 'Design'\n[step_overrides]\n{extra}"),
         )
         .unwrap();
-        let output = run_cli(root, &["status", "run"]);
+        let output = run_cli(root, &["show", "run"]);
         assert!(!output.status.success(), "{extra}");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
             format!("flow = 'workflow'\nstep = 'Design'\n[step_overrides]\n{extra}")
         );
     }
+}
+
+#[test]
+fn bare_list_shows_help_without_reading_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir_all(root.join(".flow")).unwrap();
+    fs::write(root.join(".flow/broken.toml"), "not a flow").unwrap();
+    let output = run_cli(root, &["list"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let help = String::from_utf8_lossy(&output.stdout);
+    for word in ["Usage:", "flows", "instances", "steps"] {
+        assert!(help.contains(word), "{help}");
+    }
+    assert!(!root.join(".flow/instances").exists());
+}
+
+#[test]
+fn removed_commands_and_implicit_argument_forms_are_rejected() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_movable_flow(&root.join(".flow/workflow.toml"));
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    let path = root.join(".flow/instances/run.toml");
+    let before = fs::read(&path).unwrap();
+    for args in [
+        &["status", "run"][..],
+        &["resume", "run", "--owner", "agent"],
+        &["pause", "run"],
+        &["stop", "run"],
+        &["step-overrides", "skip", "run", "Review"],
+        &["new-flow-from-template", "other"],
+        &["show"],
+        &["show", "run", "Review"],
+        &["route", "initial", "run", "Review"],
+        &["autonomy", "set", "run", "guided", "Review"],
+    ] {
+        assert!(!run_cli(root, args).status.success(), "{args:?}");
+        assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
+    }
+}
+
+#[test]
+fn autonomy_selection_forms_are_required_complete_and_exclusive() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_movable_flow(&root.join(".flow/workflow.toml"));
+    assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
+    let path = root.join(".flow/instances/run.toml");
+    let before = fs::read(&path).unwrap();
+    for selection in [
+        vec![],
+        vec!["--from", "Design"],
+        vec!["--through", "Review"],
+        vec!["--step", "Review", "--from", "Design", "--through", "Review"],
+        vec!["--step", "Review", "--through", "Review"],
+        vec!["--step", "Review", "--from", "Design"],
+    ] {
+        let mut args = vec!["autonomy", "set", "run", "steered"];
+        args.extend(selection);
+        let output = run_cli(root, &args);
+        assert!(!output.status.success(), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
+    }
+}
+
+#[test]
+fn instances_use_local_first_flow_for_initialization_and_reload() {
+    for flags in [vec![], vec!["-g"], vec!["-G"]] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        fs::create_dir_all(root.join(".flow")).unwrap();
+        fs::write(
+            root.join(".flow/workflow.toml"),
+            "initial_step = 'LocalOnly'\n[[steps]]\nname = 'LocalOnly'\n",
+        )
+        .unwrap();
+        let global_flow = root.join("global/flow/workflow.toml");
+        write_movable_flow(&global_flow);
+        let original = fs::read(&global_flow).unwrap();
+        let mut args = vec!["start", "workflow", "run"];
+        args.extend(flags);
+        let started = run_cli(root, &args);
+        assert!(
+            started.status.success(),
+            "{}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+        assert!(String::from_utf8_lossy(&started.stdout).contains("current step: LocalOnly"));
+        assert_eq!(fs::read(&global_flow).unwrap(), original);
+        let shown = run_cli(root, &["show", "run"]);
+        assert!(
+            shown.status.success(),
+            "{}",
+            String::from_utf8_lossy(&shown.stderr)
+        );
+        assert!(String::from_utf8_lossy(&shown.stdout).contains("current step: LocalOnly"));
+    }
+}
+
+#[test]
+fn old_storage_paths_are_ignored_and_left_untouched() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    for path in [".flows/workflow.toml", "global/flows/workflow.toml"] {
+        write_flow(&root.join(path));
+    }
+    let old_instance = root.join(".flows/instances/run.toml");
+    fs::create_dir_all(old_instance.parent().unwrap()).unwrap();
+    fs::write(&old_instance, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
+    let before = fs::read(&old_instance).unwrap();
+    for args in [&["show", "run"][..], &["start", "workflow", "new"]] {
+        assert!(!run_cli(root, args).status.success(), "{args:?}");
+    }
+    let listed = run_cli(root, &["list", "flows"]);
+    assert_eq!(String::from_utf8_lossy(&listed.stdout), "no flows found\n");
+    assert_eq!(fs::read(&old_instance).unwrap(), before);
+    assert!(!root.join(".flow").exists());
+    assert!(!root.join("global/flow").exists());
+}
+
+#[test]
+fn name_validation_rejects_consecutive_dots_before_any_write() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_local_flow(root);
+    for args in [
+        &["create-flow", "a..b"][..],
+        &["start", "workflow", "a..b"],
+        &["show", "a..b"],
+    ] {
+        let output = run_cli(root, args);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("consecutive dots"));
+    }
+    assert!(!root.join(".flow/instances").exists());
 }

@@ -17,11 +17,12 @@ macro_rules! impl_name {
                 let value = value.into();
                 let mut characters = value.chars();
                 let valid_first = characters.next().is_some_and(|c| c.is_ascii_alphanumeric());
-                if !valid_first
+                if value.contains("..")
+                    || !valid_first
                     || !characters.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
                 {
                     return Err(format!(
-                        "invalid {} name {:?}: use ASCII letters, digits, '-', '_' or '.', starting with a letter or digit",
+                        "invalid {} name {:?}: use ASCII letters, digits, '-', '_' or '.', starting with a letter or digit, without consecutive dots",
                         $kind, value
                     ));
                 }
@@ -78,7 +79,9 @@ mod tests {
 
     #[test]
     fn rejects_invalid_slugs() {
-        for value in ["", "-start", "_start", ".", "..", "a/b", "a\\b", "a b", "é"] {
+        for value in [
+            "", "-start", "_start", ".", "..", "a/b", "a\\b", "a b", "é", "a..b",
+        ] {
             assert!(FlowName::parse(value).is_err());
             assert!(InstanceName::parse(value).is_err());
         }

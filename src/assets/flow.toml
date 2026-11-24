@@ -1,4 +1,4 @@
-# Optional metadata for the whole flow. Details and checklist items appear in status.
+# Optional metadata for the whole flow. Details and checklist items appear in show output.
 summary = "Draft, review, and complete work."
 details = "A small example showing flow-wide and step-specific guidance."
 checklist = [
@@ -9,7 +9,7 @@ checklist = [
 # Initial step for each new instance.
 initial_step = "Draft"
 
-# Global guidance is included in status by default. Set false to hide it.
+# Global guidance is included in show output by default. Set false to hide it.
 use_global = true
 
 # Each step can have a summary, details, checklist, and allowed next steps.

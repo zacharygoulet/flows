@@ -193,8 +193,13 @@ impl Instance {
         if self.step_overrides.skipped.contains(&name) {
             raise::raise(format!("cannot set skipped step {name:?} as initial"));
         }
-        self.step = StepName(name.clone());
         self.step_overrides.initial = (name != self.flow.initial_step().0).then_some(StepName(name));
+        self.save_existing();
+        self
+    }
+
+    pub fn reset(mut self) -> Self {
+        self.step = self.configured_initial().clone();
         self.save_existing();
         self
     }

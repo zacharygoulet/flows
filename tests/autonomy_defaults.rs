@@ -1,6 +1,6 @@
 use std::{fs, path::Path, process::Command};
 
-use flows::{Autonomy, Flow};
+use flow::{Autonomy, Flow};
 use indoc::indoc;
 
 const FLOW: &str = indoc! {r#"
@@ -18,7 +18,7 @@ const FLOW: &str = indoc! {r#"
 "#};
 
 fn run_cli(root: &Path, args: &[&str]) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_flows"))
+    let output = Command::new(env!("CARGO_BIN_EXE_flow"))
         .args(args)
         .current_dir(root)
         .env("XDG_STATE_HOME", root.join("global"))
@@ -34,13 +34,13 @@ fn run_cli(root: &Path, args: &[&str]) -> String {
 
 fn setup() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
-    fs::create_dir_all(directory.path().join(".flows/instances")).unwrap();
-    fs::write(directory.path().join(".flows/workflow.toml"), FLOW).unwrap();
+    fs::create_dir_all(directory.path().join(".flow/instances")).unwrap();
+    fs::write(directory.path().join(".flow/workflow.toml"), FLOW).unwrap();
     directory
 }
 
 fn saved_instance(root: &Path) -> toml::Value {
-    toml::from_str(&fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap()).unwrap()
+    toml::from_str(&fs::read_to_string(root.join(".flow/instances/run.toml")).unwrap()).unwrap()
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn start_snapshots_defaults_and_status_uses_them() {
     assert_eq!(saved["autonomy"]["Build"].as_str(), Some("autonomous"));
     assert_eq!(saved["autonomy"]["Done"].as_str(), Some("guided"));
 
-    let preview = run_cli(root, &["status", "run", "Build"]);
+    let preview = run_cli(root, &["show", "run", "--step", "Build"]);
     assert!(preview.contains("autonomy: autonomous ("), "{preview}");
     assert_eq!(saved_instance(root), saved);
     let moved = run_cli(root, &["next", "run", "Build"]);
@@ -85,14 +85,14 @@ fn legacy_missing_entries_use_defaults_without_overwriting_saved_values() {
     for autonomy in ["", "\n[autonomy]\nDesign = 'guided'\n"] {
         let directory = setup();
         let root = directory.path();
-        let path = root.join(".flows/instances/run.toml");
+        let path = root.join(".flow/instances/run.toml");
         let original = format!("flow = 'workflow'\nstep = 'Design'\n{autonomy}");
         fs::write(&path, &original).unwrap();
 
         let expected = if autonomy.is_empty() { "steered" } else { "guided" };
-        let status = run_cli(root, &["status", "run"]);
+        let status = run_cli(root, &["show", "run"]);
         assert!(status.contains(&format!("autonomy: {expected} (")), "{status}");
-        let preview = run_cli(root, &["status", "run", "Build"]);
+        let preview = run_cli(root, &["show", "run", "--step", "Build"]);
         assert!(preview.contains("autonomy: autonomous ("), "{preview}");
         assert_eq!(fs::read_to_string(&path).unwrap(), original);
 
@@ -109,24 +109,24 @@ fn changed_flow_defaults_preserve_snapshots_and_explicit_overrides() {
     let directory = setup();
     let root = directory.path();
     run_cli(root, &["start", "workflow", "run"]);
-    run_cli(root, &["autonomy", "set", "run", "guided", "Build"]);
+    run_cli(root, &["autonomy", "set", "run", "guided", "--step", "Build"]);
     let saved = saved_instance(root);
 
     fs::write(
-        root.join(".flows/workflow.toml"),
+        root.join(".flow/workflow.toml"),
         FLOW.replace("steered", "autonomous"),
     )
     .unwrap();
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     assert!(status.contains("autonomy: steered ("), "{status}");
-    let preview = run_cli(root, &["status", "run", "Build"]);
+    let preview = run_cli(root, &["show", "run", "--step", "Build"]);
     assert!(preview.contains("autonomy: guided ("), "{preview}");
     assert_eq!(saved_instance(root), saved);
 
     run_cli(root, &["context", "set", "run", "goal", "finish"]);
     assert_eq!(saved_instance(root)["autonomy"], saved["autonomy"]);
-    let overridden = run_cli(root, &["autonomy", "set", "run", "guided", "Design"]);
+    let overridden = run_cli(root, &["autonomy", "set", "run", "guided", "--step", "Design"]);
     assert!(overridden.contains("set autonomy to guided"), "{overridden}");
-    let status = run_cli(root, &["status", "run"]);
+    let status = run_cli(root, &["show", "run"]);
     assert!(status.contains("autonomy: guided ("), "{status}");
 }

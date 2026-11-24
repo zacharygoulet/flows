@@ -237,7 +237,7 @@ fn write_status(
         writeln!(formatter, "Next steps:")?;
         writeln!(
             formatter,
-            "  This is the final step. Run `flows complete {}` to complete the flow.",
+            "  This is the final step. Run `flow complete {}` to complete the flow.",
             instance.name()
         )?;
     }
