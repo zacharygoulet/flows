@@ -59,7 +59,7 @@ mod tests {
         let path = directory.path().join("instances/run");
         let contents = indoc! {r#"
             flow = "workflow"
-            state = "Design"
+            step = "Design"
         "#};
         let writer = FileWriter::from(path.clone());
 

@@ -4,16 +4,16 @@ use flows::{Autonomy, Flow};
 use indoc::indoc;
 
 const FLOW: &str = indoc! {r#"
-    initial_state = "Design"
-    [[states]]
+    initial_step = "Design"
+    [[steps]]
     name = "Design"
     autonomy = "steered"
     next = ["Build"]
-    [[states]]
+    [[steps]]
     name = "Build"
     autonomy = "autonomous"
     next = ["Done"]
-    [[states]]
+    [[steps]]
     name = "Done"
 "#};
 
@@ -46,12 +46,12 @@ fn saved_instance(root: &Path) -> toml::Value {
 #[test]
 fn parses_all_autonomy_levels_and_defaults_to_guided() {
     let flow: Flow = toml::from_str(FLOW).unwrap();
-    assert_eq!(flow.states()[0].autonomy, Autonomy::Steered);
-    assert_eq!(flow.states()[1].autonomy, Autonomy::Autonomous);
-    assert_eq!(flow.states()[2].autonomy, Autonomy::Guided);
+    assert_eq!(flow.steps()[0].autonomy, Autonomy::Steered);
+    assert_eq!(flow.steps()[1].autonomy, Autonomy::Autonomous);
+    assert_eq!(flow.steps()[2].autonomy, Autonomy::Guided);
 
     let flow: Flow = toml::from_str(&FLOW.replace("steered", "guided")).unwrap();
-    assert_eq!(flow.states()[0].autonomy, Autonomy::Guided);
+    assert_eq!(flow.steps()[0].autonomy, Autonomy::Guided);
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn legacy_missing_entries_use_defaults_without_overwriting_saved_values() {
         let directory = setup();
         let root = directory.path();
         let path = root.join(".flows/instances/run.toml");
-        let original = format!("flow = 'workflow'\nstate = 'Design'\n{autonomy}");
+        let original = format!("flow = 'workflow'\nstep = 'Design'\n{autonomy}");
         fs::write(&path, &original).unwrap();
 
         let expected = if autonomy.is_empty() { "steered" } else { "guided" };

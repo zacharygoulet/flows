@@ -1,35 +1,35 @@
-# Optional metadata for the whole flow. These details and steps appear in status.
+# Optional metadata for the whole flow. Details and checklist items appear in status.
 summary = "Draft, review, and complete work."
-details = "A small example showing flow-wide and state-specific guidance."
-steps = [
-    "Use state guidance to drive the work.",
+details = "A small example showing flow-wide and step-specific guidance."
+checklist = [
+    "Use step guidance to drive the work.",
     "Move only along listed transitions; use jump for exceptional rework.",
 ]
 
-# Initial state for each new instance.
-initial_state = "Draft"
+# Initial step for each new instance.
+initial_step = "Draft"
 
 # Global guidance is included in status by default. Set false to hide it.
 use_global = true
 
-# Each state can have a summary, details, steps, and allowed next states.
-[[states]]
+# Each step can have a summary, details, checklist, and allowed next steps.
+[[steps]]
 name = "Draft"
 summary = "Prepare the work."
 details = "Clarify the goal and decide what completion means."
-steps = ["Confirm the requested outcome.", "Identify relevant constraints."]
+checklist = ["Confirm the requested outcome.", "Identify relevant constraints."]
 next = ["Review"]
 
-[[states]]
+[[steps]]
 name = "Review"
 summary = "Review the work."
 details = "Check the result against the goal and validation evidence."
-steps = ["Inspect the changes.", "Run appropriate checks."]
+checklist = ["Inspect the changes.", "Run appropriate checks."]
 next = ["Done", "Draft"] # Returning to Draft demonstrates a rework path.
 
-[[states]]
+[[steps]]
 name = "Done"
 summary = "Complete the work."
 details = "Summarize the outcome and any remaining risks."
-steps = ["Report completion."]
-next = [] # An empty list means there are no normal next-state transitions.
+checklist = ["Report completion."]
+next = [] # An empty list means there are no normal next-step transitions.

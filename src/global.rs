@@ -8,7 +8,7 @@ pub struct GlobalGuidance {
     #[serde(default)]
     details: Option<String>,
     #[serde(default)]
-    steps: Vec<String>,
+    checklist: Vec<String>,
 }
 
 impl GlobalGuidance {
@@ -25,12 +25,13 @@ mod tests {
     #[test]
     fn bundled_guidance_loads() {
         let guidance = GlobalGuidance::bundled();
-        assert!(!guidance.steps().is_empty());
+        assert!(!guidance.checklist().is_empty());
     }
 
     #[test]
-    fn rejects_summary_and_invalid_steps() {
+    fn rejects_summary_and_invalid_checklist() {
         assert!(toml::from_str::<GlobalGuidance>("summary = 'unsupported'").is_err());
-        assert!(toml::from_str::<GlobalGuidance>("steps = [1]").is_err());
+        assert!(toml::from_str::<GlobalGuidance>("checklist = [1]").is_err());
+        assert!(toml::from_str::<GlobalGuidance>("steps = ['Old guidance']").is_err());
     }
 }

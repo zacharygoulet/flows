@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    Flow, FlowName, InstanceName, State, StateName,
+    Flow, FlowName, InstanceName, Step, StepName,
     file_writer::FileWriter,
     storage::{Scope, Storage},
 };
@@ -13,15 +13,16 @@ use rust_utils::raise::{self, RaiseContext, RaiseExt};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Deserialize, Serialize, getset::Getters)]
+#[serde(deny_unknown_fields)]
 #[getset(get = "pub")]
 pub struct Instance {
     #[serde(skip, default = "InstanceName::placeholder")]
     name: InstanceName,
     #[serde(deserialize_with = "load_flow", serialize_with = "save_flow_name")]
     flow: Flow,
-    state: StateName,
-    #[serde(default, skip_serializing_if = "StateOverrides::is_empty")]
-    state_overrides: StateOverrides,
+    step: StepName,
+    #[serde(default, skip_serializing_if = "StepOverrides::is_empty")]
+    step_overrides: StepOverrides,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     context: BTreeMap<String, String>,
     #[serde(default)]
@@ -31,16 +32,16 @@ pub struct Instance {
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-struct StateOverrides {
+struct StepOverrides {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    initial: Option<StateName>,
+    initial: Option<StepName>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     finals: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     skipped: BTreeSet<String>,
 }
 
-impl StateOverrides {
+impl StepOverrides {
     fn is_empty(&self) -> bool {
         self.initial.is_none() && self.finals.is_empty() && self.skipped.is_empty()
     }
@@ -59,8 +60,8 @@ pub enum Autonomy {
 }
 
 pub enum Move {
-    Next(StateName),
-    JumpTo(StateName),
+    Next(StepName),
+    JumpTo(StepName),
 }
 
 pub enum ContextUpdate {
@@ -106,53 +107,53 @@ impl Instance {
         format!("{}", crate::output::InstanceStatus(self))
     }
 
-    pub fn status_for_state(&self, name: &str) -> String {
-        self.require_state(name);
-        format!("{}", crate::output::StatePreview(self, name))
+    pub fn status_for_step(&self, name: &str) -> String {
+        self.require_step(name);
+        format!("{}", crate::output::StepPreview(self, name))
     }
 
     pub fn new(name: InstanceName, flow: Flow) -> Self {
         flow.validate();
-        let state = flow.initial_state().clone();
+        let step = flow.initial_step().clone();
         let autonomy = flow
-            .states()
+            .steps()
             .iter()
-            .map(|state| (state.name.clone(), state.autonomy))
+            .map(|step| (step.name.clone(), step.autonomy))
             .collect();
         let instance = Self {
             name,
             flow,
-            state,
-            state_overrides: StateOverrides::default(),
+            step,
+            step_overrides: StepOverrides::default(),
             context: BTreeMap::new(),
             autonomy,
             owner: None,
         };
-        instance.validate_current_state();
+        instance.validate_current_step();
         instance
     }
 
-    pub fn configured_initial(&self) -> &StateName {
-        self.state_overrides
+    pub fn configured_initial(&self) -> &StepName {
+        self.step_overrides
             .initial
             .as_ref()
-            .unwrap_or_else(|| self.flow.initial_state())
+            .unwrap_or_else(|| self.flow.initial_step())
     }
 
     pub(crate) fn is_final(&self, name: &str) -> bool {
-        self.state_overrides.finals.contains(name)
-            || self.find_state(name).is_some_and(|state| state.next.is_empty())
+        self.step_overrides.finals.contains(name)
+            || self.find_step(name).is_some_and(|step| step.next.is_empty())
     }
 
-    pub fn effective_next(&self) -> Vec<&State> {
-        self.effective_next_for(&self.state.0)
+    pub fn effective_next(&self) -> Vec<&Step> {
+        self.effective_next_for(&self.step.0)
     }
 
-    pub fn effective_next_for(&self, name: &str) -> Vec<&State> {
+    pub fn effective_next_for(&self, name: &str) -> Vec<&Step> {
         if self.is_final(name) {
             return Vec::new();
         }
-        let current = self.find_state(name).expect("state was validated");
+        let current = self.find_step(name).expect("step was validated");
         let mut visited = HashSet::new();
         let mut result = Vec::new();
         for next in &current.next {
@@ -161,76 +162,76 @@ impl Instance {
         result
     }
 
-    fn expand_next<'a>(&'a self, name: &str, visited: &mut HashSet<String>, result: &mut Vec<&'a State>) {
+    fn expand_next<'a>(&'a self, name: &str, visited: &mut HashSet<String>, result: &mut Vec<&'a Step>) {
         if !visited.insert(name.to_owned()) {
             return;
         }
-        let state = self.find_state(name).expect("flow transitions were validated");
-        if self.state_overrides.skipped.contains(name) {
-            if !self.state_overrides.finals.contains(name) {
-                for next in &state.next {
+        let step = self.find_step(name).expect("flow transitions were validated");
+        if self.step_overrides.skipped.contains(name) {
+            if !self.step_overrides.finals.contains(name) {
+                for next in &step.next {
                     self.expand_next(&next.0, visited, result);
                 }
             }
         } else {
-            result.push(state);
+            result.push(step);
         }
     }
 
-    fn find_state(&self, name: &str) -> Option<&State> {
-        self.flow.states().iter().find(|state| state.name == name)
+    fn find_step(&self, name: &str) -> Option<&Step> {
+        self.flow.steps().iter().find(|step| step.name == name)
     }
 
-    fn require_state(&self, name: &str) {
-        if self.find_state(name).is_none() {
-            raise::raise(format!("unknown state {name:?} in flow {:?}", self.flow.name()));
+    fn require_step(&self, name: &str) {
+        if self.find_step(name).is_none() {
+            raise::raise(format!("unknown step {name:?} in flow {:?}", self.flow.name()));
         }
     }
 
     pub fn set_initial(mut self, name: String) -> Self {
-        self.require_state(&name);
-        if self.state_overrides.skipped.contains(&name) {
-            raise::raise(format!("cannot set skipped state {name:?} as initial"));
+        self.require_step(&name);
+        if self.step_overrides.skipped.contains(&name) {
+            raise::raise(format!("cannot set skipped step {name:?} as initial"));
         }
-        self.state = StateName(name.clone());
-        self.state_overrides.initial = (name != self.flow.initial_state().0).then_some(StateName(name));
+        self.step = StepName(name.clone());
+        self.step_overrides.initial = (name != self.flow.initial_step().0).then_some(StepName(name));
         self.save_existing();
         self
     }
 
     pub fn add_final(mut self, name: String) -> Self {
-        self.require_state(&name);
-        if self.state_overrides.skipped.contains(&name) {
-            raise::raise(format!("cannot make skipped state {name:?} final"));
+        self.require_step(&name);
+        if self.step_overrides.skipped.contains(&name) {
+            raise::raise(format!("cannot make skipped step {name:?} final"));
         }
-        self.state_overrides.finals.insert(name);
+        self.step_overrides.finals.insert(name);
         self.save_existing();
         self
     }
 
     pub fn remove_final(mut self, name: &str) -> Self {
-        self.require_state(name);
-        if !self.state_overrides.finals.remove(name) {
-            raise::raise(format!("state {name:?} is not a custom final state"));
+        self.require_step(name);
+        if !self.step_overrides.finals.remove(name) {
+            raise::raise(format!("step {name:?} is not a custom final step"));
         }
         self.save_existing();
         self
     }
 
     pub fn skip(mut self, name: String) -> Self {
-        self.require_state(&name);
-        if name == self.state.0 || name == self.configured_initial().0 || self.is_final(&name) {
-            raise::raise(format!("cannot skip current, initial, or final state {name:?}"));
+        self.require_step(&name);
+        if name == self.step.0 || name == self.configured_initial().0 || self.is_final(&name) {
+            raise::raise(format!("cannot skip current, initial, or final step {name:?}"));
         }
-        self.state_overrides.skipped.insert(name);
+        self.step_overrides.skipped.insert(name);
         self.save_existing();
         self
     }
 
     pub fn unskip(mut self, name: &str) -> Self {
-        self.require_state(name);
-        if !self.state_overrides.skipped.remove(name) {
-            raise::raise(format!("state {name:?} is not skipped"));
+        self.require_step(name);
+        if !self.step_overrides.skipped.remove(name) {
+            raise::raise(format!("step {name:?} is not skipped"));
         }
         self.save_existing();
         self
@@ -241,8 +242,8 @@ impl Instance {
             Move::Next(target) => {
                 if !self.effective_next().iter().any(|next| next.name == target.0) {
                     raise::raise(format!(
-                        "state {:?} cannot move next to {:?} in flow {:?}",
-                        self.state.0,
+                        "step {:?} cannot move next to {:?} in flow {:?}",
+                        self.step.0,
                         target.0,
                         self.flow.name()
                     ));
@@ -250,14 +251,14 @@ impl Instance {
                 target
             }
             Move::JumpTo(target) => {
-                self.require_state(&target.0);
-                if self.state_overrides.skipped.contains(&target.0) {
-                    raise::raise(format!("cannot jump to skipped state {:?}", target.0));
+                self.require_step(&target.0);
+                if self.step_overrides.skipped.contains(&target.0) {
+                    raise::raise(format!("cannot jump to skipped step {:?}", target.0));
                 }
                 target
             }
         };
-        self.state = target;
+        self.step = target;
     }
 
     pub fn move_to(mut self, movement: Move) -> Self {
@@ -310,10 +311,10 @@ impl Instance {
 
     pub fn complete_from_name(name: &str) {
         let instance = Self::load_from_name(name);
-        if !instance.is_final(&instance.state.0) {
+        if !instance.is_final(&instance.step.0) {
             raise::raise(format!(
-                "cannot complete instance {:?} in state {:?}: state has next transitions",
-                instance.name, instance.state.0
+                "cannot complete instance {:?} in step {:?}: step has next transitions",
+                instance.name, instance.step.0
             ));
         }
         Self::stop_from_name(instance.name.as_str());
@@ -338,7 +339,7 @@ impl Instance {
     }
 
     pub fn set_autonomy(mut self, level: Autonomy, start: &str, end: Option<&str>) -> Vec<String> {
-        let affected = self.select_autonomy_states(start, end);
+        let affected = self.select_autonomy_steps(start, end);
         for name in &affected {
             self.autonomy.insert(name.clone(), level);
         }
@@ -346,11 +347,11 @@ impl Instance {
         affected
     }
 
-    fn select_autonomy_states(&self, start: &str, end: Option<&str>) -> Vec<String> {
-        let states = self.flow.states();
+    fn select_autonomy_steps(&self, start: &str, end: Option<&str>) -> Vec<String> {
+        let steps = self.flow.steps();
         for name in [Some(start), end].into_iter().flatten() {
-            if !states.iter().any(|state| state.name == name) {
-                raise::raise(format!("unknown state {name:?} in flow {:?}", self.flow.name()));
+            if !steps.iter().any(|step| step.name == name) {
+                raise::raise(format!("unknown step {name:?} in flow {:?}", self.flow.name()));
             }
         }
 
@@ -358,7 +359,7 @@ impl Instance {
             return vec![start.to_owned()];
         };
 
-        states_on_next_paths(states, start, end).unwrap_or_else(|| {
+        steps_on_next_paths(steps, start, end).unwrap_or_else(|| {
             raise::raise(format!(
                 "no next path from {start:?} to {end:?} in flow {:?}",
                 self.flow.name()
@@ -367,11 +368,11 @@ impl Instance {
     }
 
     pub fn current_autonomy(&self) -> Autonomy {
-        self.autonomy_for(&self.state.0)
+        self.autonomy_for(&self.step.0)
     }
 
     pub fn autonomy_for(&self, name: &str) -> Autonomy {
-        *self.autonomy.get(name).expect("state autonomy was initialized")
+        *self.autonomy.get(name).expect("step autonomy was initialized")
     }
 
     pub fn save_new(&self, policy: InstanceSavePolicy) -> PathBuf {
@@ -386,18 +387,18 @@ impl Instance {
         let path = Storage::current().find_instance(name.as_str());
         let mut instance = Self::deserialize_from_path(&path);
         instance.name = name;
-        instance.validate_current_state();
+        instance.validate_current_step();
         instance.validate_configuration();
-        for state in instance.flow.states() {
+        for step in instance.flow.steps() {
             instance
                 .autonomy
-                .entry(state.name.clone())
-                .or_insert(state.autonomy);
+                .entry(step.name.clone())
+                .or_insert(step.autonomy);
         }
         for name in instance.autonomy.keys() {
-            if !instance.flow.states().iter().any(|state| &state.name == name) {
+            if !instance.flow.steps().iter().any(|step| &step.name == name) {
                 raise::raise(format!(
-                    "instance {:?} has autonomy for unknown state {name:?}",
+                    "instance {:?} has autonomy for unknown step {name:?}",
                     instance.name
                 ));
             }
@@ -432,45 +433,45 @@ impl Instance {
     }
 
     fn validate_configuration(&self) {
-        self.require_state(&self.configured_initial().0);
-        for name in &self.state_overrides.finals {
-            self.require_state(name);
+        self.require_step(&self.configured_initial().0);
+        for name in &self.step_overrides.finals {
+            self.require_step(name);
         }
-        for name in &self.state_overrides.skipped {
-            self.require_state(name);
-            if name == &self.state.0 || name == &self.configured_initial().0 || self.is_final(name) {
+        for name in &self.step_overrides.skipped {
+            self.require_step(name);
+            if name == &self.step.0 || name == &self.configured_initial().0 || self.is_final(name) {
                 raise::raise(format!(
-                    "instance {:?} has invalid skipped state {name:?}: current, initial, or final",
+                    "instance {:?} has invalid skipped step {name:?}: current, initial, or final",
                     self.name
                 ));
             }
         }
     }
 
-    fn validate_current_state(&self) {
-        if !self.flow.states().iter().any(|state| state.name == self.state.0) {
+    fn validate_current_step(&self) {
+        if !self.flow.steps().iter().any(|step| step.name == self.step.0) {
             raise::raise(format!(
-                "instance {:?} refers to unknown state {:?} in flow {:?}",
+                "instance {:?} refers to unknown step {:?} in flow {:?}",
                 self.name,
-                self.state.0,
+                self.step.0,
                 self.flow.name()
             ));
         }
     }
 }
 
-fn states_on_next_paths(states: &[State], start: &str, end: &str) -> Option<Vec<String>> {
+fn steps_on_next_paths(steps: &[Step], start: &str, end: &str) -> Option<Vec<String>> {
     let mut reachable_from_start = HashSet::new();
     let mut to_visit = vec![start];
     while let Some(name) = to_visit.pop() {
         if !reachable_from_start.insert(name) || name == end {
             continue;
         }
-        let state = states
+        let step = steps
             .iter()
-            .find(|state| state.name == name)
-            .expect("state was validated");
-        to_visit.extend(state.next.iter().map(|next| next.0.as_str()));
+            .find(|step| step.name == name)
+            .expect("step was validated");
+        to_visit.extend(step.next.iter().map(|next| next.0.as_str()));
     }
 
     if !reachable_from_start.contains(end) {
@@ -484,20 +485,20 @@ fn states_on_next_paths(states: &[State], start: &str, end: &str) -> Option<Vec<
             continue;
         }
         to_visit.extend(
-            states
+            steps
                 .iter()
-                .filter(|state| state.next.iter().any(|next| next.0 == name))
-                .map(|state| state.name.as_str()),
+                .filter(|step| step.next.iter().any(|next| next.0 == name))
+                .map(|step| step.name.as_str()),
         );
     }
     Some(
-        states
+        steps
             .iter()
-            .filter(|state| {
-                reachable_from_start.contains(state.name.as_str())
-                    && can_reach_end.contains(state.name.as_str())
+            .filter(|step| {
+                reachable_from_start.contains(step.name.as_str())
+                    && can_reach_end.contains(step.name.as_str())
             })
-            .map(|state| state.name.clone())
+            .map(|step| step.name.clone())
             .collect(),
     )
 }
@@ -520,8 +521,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{Flow, Instance, Move, StateName, states_on_next_paths};
-    use crate::{FlowName, InstanceName, State};
+    use super::{Flow, Instance, Move, StepName, steps_on_next_paths};
+    use crate::{FlowName, InstanceName, Step};
     use indoc::indoc;
     use rust_utils::raise::catch_raised;
 
@@ -531,14 +532,14 @@ mod tests {
             .to_string()
     }
 
-    fn state(name: &str, next: Vec<StateName>) -> State {
-        State {
+    fn step(name: &str, next: Vec<StepName>) -> Step {
+        Step {
             name: name.to_owned(),
             autonomy: Default::default(),
             next,
             summary: None,
             details: None,
-            steps: Vec::new(),
+            checklist: Vec::new(),
         }
     }
 
@@ -547,11 +548,11 @@ mod tests {
             InstanceName::parse("run").unwrap(),
             Flow::new(
                 FlowName::parse("workflow").unwrap(),
-                StateName("Draft".into()),
+                StepName("Draft".into()),
                 vec![
-                    state("Draft", vec![StateName("Review".into())]),
-                    state("Review", vec![]),
-                    state("Done", vec![]),
+                    step("Draft", vec![StepName("Review".into())]),
+                    step("Review", vec![]),
+                    step("Done", vec![]),
                 ],
             ),
         )
@@ -559,25 +560,25 @@ mod tests {
 
     #[test]
     fn next_path_selection_includes_branches_and_loops_before_end() {
-        let states = vec![
-            state("End", vec![StateName("After".into())]),
-            state(
+        let steps = vec![
+            step("End", vec![StepName("After".into())]),
+            step(
                 "Start",
                 vec![
-                    StateName("Left".into()),
-                    StateName("Right".into()),
-                    StateName("Dead".into()),
+                    StepName("Left".into()),
+                    StepName("Right".into()),
+                    StepName("Dead".into()),
                 ],
             ),
-            state("Left", vec![StateName("Loop".into()), StateName("End".into())]),
-            state("Right", vec![StateName("End".into())]),
-            state("Dead", vec![]),
-            state("Loop", vec![StateName("Left".into())]),
-            state("After", vec![StateName("End".into())]),
+            step("Left", vec![StepName("Loop".into()), StepName("End".into())]),
+            step("Right", vec![StepName("End".into())]),
+            step("Dead", vec![]),
+            step("Loop", vec![StepName("Left".into())]),
+            step("After", vec![StepName("End".into())]),
         ];
 
         assert_eq!(
-            states_on_next_paths(&states, "Start", "End"),
+            steps_on_next_paths(&steps, "Start", "End"),
             Some(
                 vec!["End", "Start", "Left", "Right", "Loop"]
                     .into_iter()
@@ -586,12 +587,12 @@ mod tests {
             )
         );
         assert_eq!(
-            states_on_next_paths(&states, "Start", "Dead"),
+            steps_on_next_paths(&steps, "Start", "Dead"),
             Some(vec!["Start", "Dead"].into_iter().map(String::from).collect())
         );
-        assert_eq!(states_on_next_paths(&states, "Dead", "End"), None);
+        assert_eq!(steps_on_next_paths(&steps, "Dead", "End"), None);
         assert_eq!(
-            states_on_next_paths(&states, "End", "End"),
+            steps_on_next_paths(&steps, "End", "End"),
             Some(vec!["End".into()])
         );
     }
@@ -599,38 +600,38 @@ mod tests {
     #[test]
     fn next_follows_a_listed_transition() {
         let mut instance = instance_with_transitions();
-        instance.apply_move(Move::Next(StateName("Review".into())));
-        assert_eq!(instance.state.0, "Review");
+        instance.apply_move(Move::Next(StepName("Review".into())));
+        assert_eq!(instance.step.0, "Review");
     }
 
     #[test]
-    fn next_rejects_an_unlisted_transition_without_changing_state() {
+    fn next_rejects_an_unlisted_transition_without_changing_step() {
         let mut instance = instance_with_transitions();
-        let error = raised_message(|| instance.apply_move(Move::Next(StateName("Done".into()))));
+        let error = raised_message(|| instance.apply_move(Move::Next(StepName("Done".into()))));
         assert!(error.contains("cannot move next"));
-        assert_eq!(instance.state.0, "Draft");
+        assert_eq!(instance.step.0, "Draft");
     }
 
     #[test]
     fn jump_can_bypass_listed_transitions() {
         let mut instance = instance_with_transitions();
-        instance.apply_move(Move::JumpTo(StateName("Done".into())));
-        assert_eq!(instance.state.0, "Done");
+        instance.apply_move(Move::JumpTo(StepName("Done".into())));
+        assert_eq!(instance.step.0, "Done");
     }
 
     #[test]
-    fn jump_rejects_unknown_state_without_changing_state() {
+    fn jump_rejects_unknown_step_without_changing_step() {
         let mut instance = instance_with_transitions();
-        let error = raised_message(|| instance.apply_move(Move::JumpTo(StateName("Missing".into()))));
-        assert!(error.contains("unknown state"));
-        assert_eq!(instance.state.0, "Draft");
+        let error = raised_message(|| instance.apply_move(Move::JumpTo(StepName("Missing".into()))));
+        assert!(error.contains("unknown step"));
+        assert_eq!(instance.step.0, "Draft");
     }
 
     #[test]
     fn constructor_rejects_invalid_flow() {
         let flow: Flow = toml::from_str(indoc! {r#"
-            initial_state = "Missing"
-            [[states]]
+            initial_step = "Missing"
+            [[steps]]
             name = "Design"
             next = []
         "#})
@@ -638,15 +639,15 @@ mod tests {
 
         assert!(
             raised_message(|| Instance::new(InstanceName::parse("run").unwrap(), flow))
-                .contains("unknown initial state")
+                .contains("unknown initial step")
         );
     }
 
     #[test]
-    fn verifies_current_state_belongs_to_flow() {
+    fn verifies_current_step_belongs_to_flow() {
         let mut instance = instance_with_transitions();
-        instance.state = StateName("Missing".into());
-        assert!(raised_message(|| instance.validate_current_state()).contains("Missing"));
+        instance.step = StepName("Missing".into());
+        assert!(raised_message(|| instance.validate_current_step()).contains("Missing"));
     }
 
     #[test]
@@ -655,74 +656,70 @@ mod tests {
             InstanceName::parse("run").unwrap(),
             Flow::new(
                 FlowName::parse("workflow").unwrap(),
-                StateName("Start".into()),
+                StepName("Start".into()),
                 vec![
-                    state(
+                    step(
                         "Start",
-                        vec![
-                            StateName("A".into()),
-                            StateName("B".into()),
-                            StateName("End".into()),
-                        ],
+                        vec![StepName("A".into()), StepName("B".into()), StepName("End".into())],
                     ),
-                    state("A", vec![StateName("B".into()), StateName("End".into())]),
-                    state("B", vec![StateName("A".into()), StateName("End".into())]),
-                    state("End", vec![]),
+                    step("A", vec![StepName("B".into()), StepName("End".into())]),
+                    step("B", vec![StepName("A".into()), StepName("End".into())]),
+                    step("End", vec![]),
                 ],
             ),
         );
-        instance.state_overrides.skipped.extend(["A".into(), "B".into()]);
+        instance.step_overrides.skipped.extend(["A".into(), "B".into()]);
         assert_eq!(
             instance
                 .effective_next()
                 .iter()
-                .map(|state| state.name.as_str())
+                .map(|step| step.name.as_str())
                 .collect::<Vec<_>>(),
             vec!["End"]
         );
         assert!(
-            raised_message(|| instance.apply_move(Move::Next(StateName("A".into()))))
+            raised_message(|| instance.apply_move(Move::Next(StepName("A".into()))))
                 .contains("cannot move next")
         );
         assert!(
-            raised_message(|| instance.apply_move(Move::JumpTo(StateName("B".into())))).contains("skipped")
+            raised_message(|| instance.apply_move(Move::JumpTo(StepName("B".into())))).contains("skipped")
         );
-        instance.apply_move(Move::Next(StateName("End".into())));
+        instance.apply_move(Move::Next(StepName("End".into())));
         assert!(instance.effective_next().is_empty());
     }
 
     #[test]
-    fn self_transition_through_skipped_state_is_available() {
+    fn self_transition_through_skipped_step_is_available() {
         let mut instance = Instance::new(
             InstanceName::parse("run").unwrap(),
             Flow::new(
                 FlowName::parse("workflow").unwrap(),
-                StateName("Start".into()),
+                StepName("Start".into()),
                 vec![
-                    state("Start", vec![StateName("Loop".into())]),
-                    state("Loop", vec![StateName("Start".into())]),
+                    step("Start", vec![StepName("Loop".into())]),
+                    step("Loop", vec![StepName("Start".into())]),
                 ],
             ),
         );
-        instance.state_overrides.skipped.insert("Loop".into());
+        instance.step_overrides.skipped.insert("Loop".into());
         assert_eq!(instance.effective_next()[0].name, "Start");
-        instance.apply_move(Move::Next(StateName("Start".into())));
+        instance.apply_move(Move::Next(StepName("Start".into())));
     }
 
     #[test]
-    fn skipped_cycle_without_a_final_state_is_not_completable() {
+    fn skipped_cycle_without_a_final_step_is_not_completable() {
         let mut instance = Instance::new(
             InstanceName::parse("run").unwrap(),
             Flow::new(
                 FlowName::parse("workflow").unwrap(),
-                StateName("Start".into()),
+                StepName("Start".into()),
                 vec![
-                    state("Start", vec![StateName("Loop".into())]),
-                    state("Loop", vec![StateName("Loop".into())]),
+                    step("Start", vec![StepName("Loop".into())]),
+                    step("Loop", vec![StepName("Loop".into())]),
                 ],
             ),
         );
-        instance.state_overrides.skipped.insert("Loop".into());
+        instance.step_overrides.skipped.insert("Loop".into());
         assert!(instance.effective_next().is_empty());
         assert!(!instance.is_final("Start"));
     }
@@ -730,11 +727,11 @@ mod tests {
     #[test]
     fn custom_final_truncates_transitions_and_default_terminal_remains_terminal() {
         let mut instance = instance_with_transitions();
-        instance.state_overrides.finals.insert("Draft".into());
+        instance.step_overrides.finals.insert("Draft".into());
         assert!(instance.effective_next().is_empty());
-        instance.state_overrides.finals.clear();
+        instance.step_overrides.finals.clear();
         assert_eq!(instance.effective_next()[0].name, "Review");
-        instance.apply_move(Move::JumpTo(StateName("Done".into())));
+        instance.apply_move(Move::JumpTo(StepName("Done".into())));
         assert!(instance.effective_next().is_empty());
     }
 }

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use flows::{
     Autonomy, ContextUpdate, Flow, FlowName, Instance, InstanceName, InstanceSavePolicy, Move, Scope,
-    StateName, Storage, output,
+    StepName, Storage, output,
 };
 use rust_utils::raise::RaiseExt;
 use uuid::Uuid;
@@ -51,40 +51,40 @@ enum Cli {
     /// Delete an instance.
     Stop { instance_name: InstanceName },
 
-    /// Complete and delete an instance in a terminal state.
+    /// Complete and delete an instance in a terminal step.
     Complete { instance_name: InstanceName },
 
-    /// Move to a listed next state and show its status.
+    /// Move to a listed next step and show its status.
     Next {
         /// Instance to move.
         instance_name: InstanceName,
-        /// Listed next state; omit to select the first available transition.
+        /// Listed next step; omit to select the first available transition.
         target: Option<String>,
     },
 
-    /// Configure initial, final, and skipped states for an instance.
-    StateOverrides {
+    /// Configure initial, final, and skipped steps for an instance.
+    StepOverrides {
         #[command(subcommand)]
-        action: StateOverridesAction,
+        action: StepOverridesAction,
     },
 
-    /// Jump to any unskipped defined state and show its status.
+    /// Jump to any unskipped defined step and show its status.
     Jump {
         /// Instance to move.
         instance_name: InstanceName,
-        /// Destination state.
+        /// Destination step.
         target: String,
     },
 
-    /// Show current or named state guidance without moving, or list all instances.
+    /// Show current or named step guidance without moving, or list all instances.
     Status {
         /// Instance to inspect; omit to list all instances.
         instance_name: Option<InstanceName>,
-        /// State to inspect without changing the instance.
-        state: Option<String>,
+        /// Step to inspect without changing the instance.
+        step: Option<String>,
     },
 
-    /// List flows or states in a flow.
+    /// List flows or steps in a flow.
     List {
         #[command(subcommand)]
         target: Option<ListTarget>,
@@ -96,7 +96,7 @@ enum Cli {
         action: ContextAction,
     },
 
-    /// Set autonomy for a state or a range along next paths.
+    /// Set autonomy for a step or a range along next paths.
     Autonomy {
         #[command(subcommand)]
         action: AutonomyAction,
@@ -112,47 +112,47 @@ enum Cli {
 }
 
 #[derive(Subcommand)]
-enum StateOverridesAction {
-    /// Set an instance's initial state, reset its current state, and show status.
+enum StepOverridesAction {
+    /// Set an instance's initial step, reset its current step, and show status.
     Initial {
         instance_name: InstanceName,
-        state: String,
+        step: String,
     },
-    /// Manage additional final states for an instance.
+    /// Manage additional final steps for an instance.
     Final {
         #[command(subcommand)]
         action: FinalAction,
     },
-    /// Bypass a state on normal next transitions.
+    /// Bypass a step on normal next transitions.
     Skip {
         instance_name: InstanceName,
-        state: String,
+        step: String,
     },
-    /// Restore a skipped state to normal next transitions.
+    /// Restore a skipped step to normal next transitions.
     Unskip {
         instance_name: InstanceName,
-        state: String,
+        step: String,
     },
 }
 
 #[derive(Subcommand)]
 enum FinalAction {
-    /// Add a custom final state.
+    /// Add a custom final step.
     Add {
         instance_name: InstanceName,
-        state: String,
+        step: String,
     },
-    /// Remove a custom final state (flow terminal states remain terminal).
+    /// Remove a custom final step (flow terminal steps remain terminal).
     Remove {
         instance_name: InstanceName,
-        state: String,
+        step: String,
     },
 }
 
 #[derive(Subcommand)]
 enum ListTarget {
-    /// List states in flow order.
-    States { flow_name: FlowName },
+    /// List steps in flow order.
+    Steps { flow_name: FlowName },
 }
 
 #[derive(Subcommand)]
@@ -172,16 +172,16 @@ enum ContextAction {
 
 #[derive(Subcommand)]
 enum AutonomyAction {
-    /// Set a state's level or every state on next paths through an end state.
+    /// Set a step's level or every step on next paths through an end step.
     Set {
         /// Instance to configure.
         instance_name: InstanceName,
         /// guided, steered, or autonomous.
         level: Autonomy,
-        /// First state to configure.
-        state: String,
-        /// Inclusive end state; omit to change only the first state.
-        end_state: Option<String>,
+        /// First step to configure.
+        step: String,
+        /// Inclusive end step; omit to change only the first step.
+        end_step: Option<String>,
     },
 }
 
@@ -218,28 +218,28 @@ fn run(cli: Cli) {
             println!("completed instance {instance_name}");
         }
         Cli::NewFlowFromTemplate { flow_name, global } => create_flow_from_template(flow_name, global),
-        Cli::Status { instance_name: Some(instance_name), state } => {
+        Cli::Status { instance_name: Some(instance_name), step } => {
             let instance = Instance::load_from_name(instance_name.as_str());
             print!(
                 "{}",
-                match state {
-                    Some(state) => instance.status_for_state(&state),
+                match step {
+                    Some(step) => instance.status_for_step(&step),
                     None => instance.status(),
                 }
             );
         }
-        Cli::Status { instance_name: None, state: None } => status_all(),
-        Cli::Status { instance_name: None, state: Some(_) } => {
+        Cli::Status { instance_name: None, step: None } => status_all(),
+        Cli::Status { instance_name: None, step: Some(_) } => {
             unreachable!("clap requires the instance name")
         }
         Cli::List { target } => list(target),
         Cli::Context { action } => change_context(action),
         Cli::Autonomy { action } => change_autonomy(action),
-        Cli::StateOverrides { action } => change_state_overrides(action),
+        Cli::StepOverrides { action } => change_step_overrides(action),
         Cli::Next { instance_name, target } => next_instance(instance_name, target),
         Cli::Jump { instance_name, target } => move_instance(
             Instance::load_from_name(instance_name.as_str()),
-            Move::JumpTo(StateName(target)),
+            Move::JumpTo(StepName(target)),
         ),
     }
 }
@@ -278,9 +278,9 @@ fn status_all() {
 
 fn list(target: Option<ListTarget>) {
     match target {
-        Some(ListTarget::States { flow_name }) => {
+        Some(ListTarget::Steps { flow_name }) => {
             let flow = Flow::load_from_name(flow_name.as_str());
-            print!("{}", output::StatesTable(&flow));
+            print!("{}", output::StepsTable(&flow));
         }
         None => {
             let names = Storage::current().flow_names();
@@ -293,25 +293,25 @@ fn list(target: Option<ListTarget>) {
     }
 }
 
-fn change_state_overrides(action: StateOverridesAction) {
+fn change_step_overrides(action: StepOverridesAction) {
     match action {
-        StateOverridesAction::Initial { instance_name, state } => {
-            let instance = Instance::load_from_name(instance_name.as_str()).set_initial(state);
+        StepOverridesAction::Initial { instance_name, step } => {
+            let instance = Instance::load_from_name(instance_name.as_str()).set_initial(step);
             print!("{}", instance.status());
         }
-        StateOverridesAction::Final { action } => match action {
-            FinalAction::Add { instance_name, state } => {
-                Instance::load_from_name(instance_name.as_str()).add_final(state);
+        StepOverridesAction::Final { action } => match action {
+            FinalAction::Add { instance_name, step } => {
+                Instance::load_from_name(instance_name.as_str()).add_final(step);
             }
-            FinalAction::Remove { instance_name, state } => {
-                Instance::load_from_name(instance_name.as_str()).remove_final(&state);
+            FinalAction::Remove { instance_name, step } => {
+                Instance::load_from_name(instance_name.as_str()).remove_final(&step);
             }
         },
-        StateOverridesAction::Skip { instance_name, state } => {
-            Instance::load_from_name(instance_name.as_str()).skip(state);
+        StepOverridesAction::Skip { instance_name, step } => {
+            Instance::load_from_name(instance_name.as_str()).skip(step);
         }
-        StateOverridesAction::Unskip { instance_name, state } => {
-            Instance::load_from_name(instance_name.as_str()).unskip(&state);
+        StepOverridesAction::Unskip { instance_name, step } => {
+            Instance::load_from_name(instance_name.as_str()).unskip(&step);
         }
     }
 }
@@ -331,11 +331,11 @@ fn change_context(action: ContextAction) {
 
 fn change_autonomy(action: AutonomyAction) {
     match action {
-        AutonomyAction::Set { instance_name, level, state, end_state } => {
+        AutonomyAction::Set { instance_name, level, step, end_step } => {
             let changed = Instance::load_from_name(instance_name.as_str()).set_autonomy(
                 level,
-                &state,
-                end_state.as_deref(),
+                &step,
+                end_step.as_deref(),
             );
             print!("{}", output::autonomy_changed(level, &changed));
         }
@@ -348,14 +348,14 @@ fn next_instance(instance_name: InstanceName, target: Option<String>) {
         instance
             .effective_next()
             .first()
-            .map(|state| state.name.clone())
+            .map(|step| step.name.clone())
             .unwrap_or_else(|| {
                 rust_utils::raise::raise(format!(
                     "instance {instance_name} has no available next transitions"
                 ))
             })
     });
-    move_instance(instance, Move::Next(StateName(target)));
+    move_instance(instance, Move::Next(StepName(target)));
 }
 
 fn move_instance(instance: Instance, movement: Move) {

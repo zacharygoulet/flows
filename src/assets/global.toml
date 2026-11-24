@@ -1,11 +1,11 @@
 details = """
-IMPORTANT, all steps are MANDATORY. They should all be done or considered by the agent
+IMPORTANT, all checklist items are MANDATORY. They should all be done or considered by the agent
 before stopping for user feedback, so that you can have more context for your user questions
 or explaining your choices and recommandations.
 """
 
-steps = [
+checklist = [
     "Consider loading relevant skills.",
-    "Consider saving context notes if info is relevant to upcoming states.",
+    "Consider saving context notes if info is relevant to upcoming steps.",
     "Consider a subagent when useful.",
 ]

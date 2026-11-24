@@ -14,7 +14,7 @@ fn load_with_flow(flow_contents: Option<&str>) -> Output {
         root.join(".flows/instances/run.toml"),
         indoc! {r#"
             flow = "workflow"
-            state = "Design"
+            step = "Design"
         "#},
     )
     .unwrap();
@@ -52,8 +52,8 @@ fn write_flow(path: &Path) {
     fs::write(
         path,
         indoc! {r#"
-            initial_state = "Design"
-            [[states]]
+            initial_step = "Design"
+            [[steps]]
             name = "Design"
             next = []
         "#},
@@ -66,14 +66,14 @@ fn write_movable_flow(path: &Path) {
     fs::write(
         path,
         indoc! {r#"
-            initial_state = "Design"
-            [[states]]
+            initial_step = "Design"
+            [[steps]]
             name = "Design"
             next = ["Review"]
-            [[states]]
+            [[steps]]
             name = "Review"
             next = []
-            [[states]]
+            [[steps]]
             name = "Done"
             next = []
         "#},
@@ -134,7 +134,7 @@ fn help_explains_flow_then_lists_clap_commands() {
         "context",
         "rename",
         "autonomy",
-        "state-overrides",
+        "step-overrides",
         "new-flow-from-template",
     ] {
         assert!(text.contains(command), "{text}");
@@ -153,11 +153,11 @@ fn help_for_command_shows_clap_generated_arguments() {
     assert!(help.status.success(), "{}", String::from_utf8_lossy(&help.stderr));
     let text = String::from_utf8_lossy(&help.stdout);
     assert!(
-        text.contains("Usage: flows autonomy set <INSTANCE_NAME> <LEVEL> <STATE> [END_STATE]"),
+        text.contains("Usage: flows autonomy set <INSTANCE_NAME> <LEVEL> <STEP> [END_STEP]"),
         "{text}"
     );
     assert!(
-        text.contains("Inclusive end state; omit to change only the first state"),
+        text.contains("Inclusive end step; omit to change only the first step"),
         "{text}"
     );
     assert!(text.contains("guided, steered, or autonomous"), "{text}");
@@ -171,7 +171,7 @@ fn status_printing_commands_advertise_their_output() {
         &["help", "resume"],
         &["help", "next"],
         &["help", "jump"],
-        &["help", "state-overrides", "initial"],
+        &["help", "step-overrides", "initial"],
     ] {
         let help = run_cli(directory.path(), args);
         assert!(
@@ -211,45 +211,45 @@ fn next_requires_an_instance_and_help_documents_optional_target() {
 }
 
 #[test]
-fn status_help_documents_optional_preview_state() {
+fn status_help_documents_optional_preview_step() {
     let directory = tempfile::tempdir().unwrap();
     let help = run_cli(directory.path(), &["help", "status"]);
     assert!(help.status.success());
     let text = String::from_utf8_lossy(&help.stdout);
     assert!(
-        text.contains("Usage: flows status [INSTANCE_NAME] [STATE]"),
+        text.contains("Usage: flows status [INSTANCE_NAME] [STEP]"),
         "{text}"
     );
     assert!(
-        text.contains("State to inspect without changing the instance"),
+        text.contains("Step to inspect without changing the instance"),
         "{text}"
     );
 }
 
 #[test]
-fn state_overrides_help_shows_nested_commands() {
+fn step_overrides_help_shows_nested_commands() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     for (args, usage) in [
         (
-            &["help", "state-overrides", "initial"][..],
-            "Usage: flows state-overrides initial <INSTANCE_NAME> <STATE>",
+            &["help", "step-overrides", "initial"][..],
+            "Usage: flows step-overrides initial <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "state-overrides", "final", "add"],
-            "Usage: flows state-overrides final add <INSTANCE_NAME> <STATE>",
+            &["help", "step-overrides", "final", "add"],
+            "Usage: flows step-overrides final add <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "state-overrides", "final", "remove"],
-            "Usage: flows state-overrides final remove <INSTANCE_NAME> <STATE>",
+            &["help", "step-overrides", "final", "remove"],
+            "Usage: flows step-overrides final remove <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "state-overrides", "skip"],
-            "Usage: flows state-overrides skip <INSTANCE_NAME> <STATE>",
+            &["help", "step-overrides", "skip"],
+            "Usage: flows step-overrides skip <INSTANCE_NAME> <STEP>",
         ),
         (
-            &["help", "state-overrides", "unskip"],
-            "Usage: flows state-overrides unskip <INSTANCE_NAME> <STATE>",
+            &["help", "step-overrides", "unskip"],
+            "Usage: flows step-overrides unskip <INSTANCE_NAME> <STEP>",
         ),
     ] {
         let output = run_cli(root, args);
@@ -278,8 +278,8 @@ fn state_overrides_help_shows_nested_commands() {
 #[test]
 fn loads_instance_with_separate_flow_file() {
     let output = load_with_flow(Some(indoc! {r#"
-            initial_state = "Design"
-            [[states]]
+            initial_step = "Design"
+            [[steps]]
             name = "Design"
             next = []
         "#}));
@@ -290,16 +290,16 @@ fn loads_instance_with_separate_flow_file() {
     );
     let status = String::from_utf8_lossy(&output.stdout);
     assert!(
-        status.starts_with("Instance Status\n\nflow: workflow\ncurrent state: Design\nautonomy: guided ("),
+        status.starts_with("Instance Status\n\nflow: workflow\ncurrent step: Design\nautonomy: guided ("),
         "{status}"
     );
     let guidance = flows::GlobalGuidance::bundled();
-    let mut expected_global_steps = String::from("Global steps:\n");
-    for step in guidance.steps() {
-        expected_global_steps.push_str(&format!("- {step}\n"));
+    let mut expected_global_checklist = String::from("Global checklist:\n");
+    for item in guidance.checklist() {
+        expected_global_checklist.push_str(&format!("- {item}\n"));
     }
-    expected_global_steps.push('\n');
-    assert!(status.contains(&expected_global_steps), "{status}");
+    expected_global_checklist.push('\n');
+    assert!(status.contains(&expected_global_checklist), "{status}");
 }
 
 #[test]
@@ -319,13 +319,47 @@ fn rejects_legacy_instance_key() {
     fs::create_dir_all(root.join(".flows/instances")).unwrap();
     fs::write(
         root.join(".flows/instances/run.toml"),
-        "definition = 'workflow'\nstate = 'Design'\n",
+        "definition = 'workflow'\nstep = 'Design'\n",
     )
     .unwrap();
 
     let output = run_cli(root, &["status", "run"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("missing field `flow`"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown field `definition`"));
+}
+
+#[test]
+fn rejects_legacy_step_schema_without_modifying_instances() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    write_local_flow(root);
+    fs::create_dir_all(root.join(".flows/instances")).unwrap();
+    let path = root.join(".flows/instances/run.toml");
+    for (contents, field) in [
+        ("flow = 'workflow'\nstate = 'Design'\n", "state"),
+        ("flow = 'workflow'\nstep = 'Design'\nstate = 'Design'\n", "state"),
+        (
+            "flow = 'workflow'\nstep = 'Design'\n[state_overrides]\nfinals = ['Design']\n",
+            "state_overrides",
+        ),
+    ] {
+        fs::write(&path, contents).unwrap();
+        let output = run_cli(root, &["status", "run"]);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(&format!("unknown field `{field}`")), "{error}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), contents);
+    }
+}
+
+#[test]
+fn rejects_legacy_step_commands() {
+    let directory = tempfile::tempdir().unwrap();
+    for args in [&["list", "states"][..], &["state-overrides", "--help"]] {
+        let output = run_cli(directory.path(), args);
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("unrecognized subcommand"));
+    }
 }
 
 #[test]
@@ -342,14 +376,14 @@ fn rejects_legacy_flow_directory() {
 #[test]
 fn reports_invalid_flow_from_instance_deserialization() {
     let output = load_with_flow(Some(indoc! {r#"
-            initial_state = "Design"
-            [[states]]
+            initial_step = "Design"
+            [[steps]]
             name = "Design"
             next = ["Missing"]
         "#}));
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);
-    assert!(error.contains("unknown next state Missing"), "{error}");
+    assert!(error.contains("unknown next step Missing"), "{error}");
     assert!(error.contains(".flows/workflow.toml"), "{error}");
 }
 
@@ -425,7 +459,7 @@ fn new_creates_local_instance_that_can_be_loaded() {
         fs::read_to_string(&instance_path).unwrap(),
         indoc! {r#"
             flow = "workflow"
-            state = "Design"
+            step = "Design"
 
             [autonomy]
             Design = "guided"
@@ -438,7 +472,7 @@ fn new_creates_local_instance_that_can_be_loaded() {
         "{}",
         String::from_utf8_lossy(&loaded.stderr)
     );
-    assert!(String::from_utf8_lossy(&loaded.stdout).contains("state: Design"));
+    assert!(String::from_utf8_lossy(&loaded.stdout).contains("step: Design"));
 }
 
 #[test]
@@ -466,7 +500,7 @@ fn status_lists_local_and_global_instances_in_name_order() {
     );
     assert_eq!(
         String::from_utf8_lossy(&status.stdout),
-        "INSTANCE    FLOW      OWNER    STATE\n----------  --------  -------  -----\nglobal-run  workflow  unowned  Design\nlocal-run   workflow  unowned  Design\n"
+        "INSTANCE    FLOW      OWNER    STEP\n----------  --------  -------  ----\nglobal-run  workflow  unowned  Design\nlocal-run   workflow  unowned  Design\n"
     );
 }
 
@@ -488,7 +522,7 @@ fn lists_flows_with_summaries_and_local_shadowing() {
     write_flow(&global);
     fs::write(
         &local,
-        "summary = 'Local workflow'\ninitial_state = 'Done'\n[[states]]\nname = 'Done'\n",
+        "summary = 'Local workflow'\ninitial_step = 'Done'\n[[steps]]\nname = 'Done'\n",
     )
     .unwrap();
     fs::write(&global, "invalid TOML = ").unwrap();
@@ -507,14 +541,14 @@ fn lists_flows_with_summaries_and_local_shadowing() {
 }
 
 #[test]
-fn lists_states_with_summaries_in_flow_order() {
+fn lists_steps_with_summaries_in_flow_order() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let path = root.join(".flows/workflow.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "initial_state = 'Draft'\n[[states]]\nname = 'Draft'\nsummary = 'Start here'\n[[states]]\nname = 'Review'\n").unwrap();
+    fs::write(&path, "initial_step = 'Draft'\n[[steps]]\nname = 'Draft'\nsummary = 'Start here'\n[[steps]]\nname = 'Review'\n").unwrap();
 
-    let output = run_cli(root, &["list", "states", "workflow"]);
+    let output = run_cli(root, &["list", "steps", "workflow"]);
     assert!(
         output.status.success(),
         "{}",
@@ -522,12 +556,12 @@ fn lists_states_with_summaries_in_flow_order() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "STATE   SUMMARY\n------  -------\nDraft   Start here\nReview\n"
+        "STEP    SUMMARY\n------  -------\nDraft   Start here\nReview\n"
     );
 }
 
 #[test]
-fn status_displays_flow_state_and_next_state_metadata() {
+fn status_displays_flow_step_and_next_step_metadata() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let flow_path = root.join(".flows/workflow.toml");
@@ -538,17 +572,17 @@ fn status_displays_flow_state_and_next_state_metadata() {
             use_global = false
             summary = "Whole workflow summary"
             details = "Flow-wide details"
-            steps = ["Always do this", "Consider this when relevant"]
-            initial_state = "Draft"
+            checklist = ["Always do this", "Consider this when relevant"]
+            initial_step = "Draft"
 
-            [[states]]
+            [[steps]]
             name = "Draft"
             summary = "Prepare the work"
-            details = "Current-state details"
-            steps = ["Confirm the goal", "Check for existing work"]
+            details = "Current-step details"
+            checklist = ["Confirm the goal", "Check for existing work"]
             next = ["Review"]
 
-            [[states]]
+            [[steps]]
             name = "Review"
             summary = "Review the work"
             next = []
@@ -570,25 +604,25 @@ fn status_displays_flow_state_and_next_state_metadata() {
             Instance Status
 
             flow: workflow (Whole workflow summary)
-            current state: Draft (Prepare the work)
-            autonomy: guided (Confirm state boundaries and each emerging design choice.)
+            current step: Draft (Prepare the work)
+            autonomy: guided (Confirm step boundaries and each emerging design choice.)
             owner: unowned
 
             Flow details:
             Flow-wide details
 
-            State details:
-            Current-state details
+            Step details:
+            Current-step details
 
-            Flow steps:
+            Flow checklist:
             - Always do this
             - Consider this when relevant
 
-            State steps:
+            Step checklist:
             - Confirm the goal
             - Check for existing work
 
-            Next states:
+            Next steps:
               - Review: Review the work
         "}
     );
@@ -606,21 +640,21 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
         use_global = false
         summary = "Workflow summary"
         details = "Flow guidance"
-        steps = ["Flow step"]
-        initial_state = "Design"
-        [[states]]
+        checklist = ["Flow checklist item"]
+        initial_step = "Design"
+        [[steps]]
         name = "Design"
         summary = "Planning"
         details = "Design guidance"
-        steps = ["Design step"]
+        checklist = ["Design checklist item"]
         next = ["Review"]
-        [[states]]
+        [[steps]]
         name = "Review"
         summary = "Checking"
         details = "Review guidance"
-        steps = ["Review step"]
+        checklist = ["Review checklist item"]
         next = ["Done"]
-        [[states]]
+        [[steps]]
         name = "Done"
         summary = "Finished"
         next = []
@@ -645,27 +679,27 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
     assert_eq!(
         String::from_utf8_lossy(&preview.stdout),
         indoc! {"\
-        State Preview
+        Step Preview
 
         flow: workflow (Workflow summary)
-        current state: Design (Planning)
-        inspected state: Review (Checking)
+        current step: Design (Planning)
+        inspected step: Review (Checking)
         autonomy: steered (Proceed with routine work; ask on consequential choices.)
         owner: unowned
 
         Flow details:
         Flow guidance
 
-        State details:
+        Step details:
         Review guidance
 
-        Flow steps:
-        - Flow step
+        Flow checklist:
+        - Flow checklist item
 
-        State steps:
-        - Review step
+        Step checklist:
+        - Review checklist item
 
-        Next states:
+        Next steps:
           - Done: Finished
     "}
     );
@@ -675,7 +709,7 @@ fn status_preview_shows_selected_guidance_without_changing_instance() {
     assert_eq!(run_cli(root, &["status", "run"]).stdout, current);
     let invalid = run_cli(root, &["status", "run", "Unknown"]);
     assert!(!invalid.status.success());
-    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unknown state \"Unknown\""));
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("unknown step \"Unknown\""));
     assert!(invalid.stdout.is_empty());
     assert_eq!(fs::read(&instance_path).unwrap(), before);
 }
@@ -689,14 +723,14 @@ fn status_preview_respects_final_and_skip_overrides() {
     fs::write(
         &flow_path,
         indoc! {r#"
-        initial_state = "Design"
-        [[states]]
+        initial_step = "Design"
+        [[steps]]
         name = "Design"
         next = ["Review"]
-        [[states]]
+        [[steps]]
         name = "Review"
         next = ["Done"]
-        [[states]]
+        [[steps]]
         name = "Done"
         next = []
     "#},
@@ -704,7 +738,7 @@ fn status_preview_respects_final_and_skip_overrides() {
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        run_cli(root, &["state-overrides", "skip", "run", "Review"])
+        run_cli(root, &["step-overrides", "skip", "run", "Review"])
             .status
             .success()
     );
@@ -714,15 +748,15 @@ fn status_preview_respects_final_and_skip_overrides() {
     let text = String::from_utf8_lossy(&preview.stdout);
     assert!(preview.status.success(), "{text}");
     assert!(
-        text.contains("current state: Design\ninspected state: Design"),
+        text.contains("current step: Design\ninspected step: Design"),
         "{text}"
     );
-    assert!(text.contains("Next states:\n  - Done\n"), "{text}");
+    assert!(text.contains("Next steps:\n  - Done\n"), "{text}");
     assert!(!text.contains("  - Review"), "{text}");
     assert_eq!(fs::read(&path).unwrap(), before);
 
     assert!(
-        run_cli(root, &["state-overrides", "final", "add", "run", "Design"])
+        run_cli(root, &["step-overrides", "final", "add", "run", "Design"])
             .status
             .success()
     );
@@ -732,20 +766,20 @@ fn status_preview_respects_final_and_skip_overrides() {
     assert!(preview.status.success(), "{text}");
     assert!(
         text.contains(
-            "Next states:\n  This is the final state. Run `flows complete run` to complete the flow."
+            "Next steps:\n  This is the final step. Run `flows complete run` to complete the flow."
         ),
         "{text}"
     );
     assert_eq!(fs::read(&path).unwrap(), before);
-    // A preview of another state must not inherit the current state's final override.
+    // A preview of another step must not inherit the current step's final override.
     let other = run_cli(root, &["status", "run", "Review"]);
     let text = String::from_utf8_lossy(&other.stdout);
     assert!(other.status.success(), "{text}");
     assert!(
-        text.contains("current state: Design\ninspected state: Review"),
+        text.contains("current step: Design\ninspected step: Review"),
         "{text}"
     );
-    assert!(text.contains("Next states:\n  - Done"), "{text}");
+    assert!(text.contains("Next steps:\n  - Done"), "{text}");
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
@@ -767,17 +801,17 @@ fn write_branching_flow(root: &Path) {
     fs::write(
         path,
         indoc! {r#"
-            initial_state = "Start"
-            [[states]]
+            initial_step = "Start"
+            [[steps]]
             name = "Start"
             next = ["First", "Second"]
-            [[states]]
+            [[steps]]
             name = "Second"
             next = []
-            [[states]]
+            [[steps]]
             name = "Expanded"
             next = []
-            [[states]]
+            [[steps]]
             name = "First"
             next = ["Expanded", "Second"]
         "#},
@@ -801,7 +835,7 @@ fn next_without_target_uses_transition_order_and_preserves_explicit_output() {
         String::from_utf8_lossy(&implicit.stderr)
     );
     let saved = fs::read(&path).unwrap();
-    assert!(String::from_utf8_lossy(&saved).contains("state = \"First\""));
+    assert!(String::from_utf8_lossy(&saved).contains("step = \"First\""));
     assert!(run_cli(root, &["jump", "run", "Start"]).status.success());
     let explicit = run_cli(root, &["next", "run", "First"]);
     assert!(explicit.status.success());
@@ -816,17 +850,17 @@ fn next_without_target_expands_the_first_skipped_branch_before_later_branches() 
     write_branching_flow(root);
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        run_cli(root, &["state-overrides", "skip", "run", "First"])
+        run_cli(root, &["step-overrides", "skip", "run", "First"])
             .status
             .success()
     );
     let next = run_cli(root, &["next", "run"]);
     assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
-    assert!(String::from_utf8_lossy(&next.stdout).contains("state: Expanded"));
+    assert!(String::from_utf8_lossy(&next.stdout).contains("step: Expanded"));
     assert!(
         fs::read_to_string(root.join(".flows/instances/run.toml"))
             .unwrap()
-            .contains("state = \"Expanded\"")
+            .contains("step = \"Expanded\"")
     );
 }
 
@@ -845,15 +879,15 @@ fn next_explicit_nonfirst_target_and_invalid_target_keep_existing_behavior() {
 
     let next = run_cli(root, &["next", "run", "Second"]);
     assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
-    assert!(String::from_utf8_lossy(&next.stdout).contains("state: Second"));
-    assert!(fs::read_to_string(path).unwrap().contains("state = \"Second\""));
+    assert!(String::from_utf8_lossy(&next.stdout).contains("step: Second"));
+    assert!(fs::read_to_string(path).unwrap().contains("step = \"Second\""));
 }
 
 #[test]
 fn next_without_target_at_terminal_or_custom_final_does_not_modify_storage() {
     for setup in [
         &["jump", "run", "Review"][..],
-        &["state-overrides", "final", "add", "run", "Design"],
+        &["step-overrides", "final", "add", "run", "Design"],
     ] {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
@@ -875,7 +909,7 @@ fn next_without_target_at_terminal_or_custom_final_does_not_modify_storage() {
 }
 
 #[test]
-fn next_and_jump_persist_local_instance_state() {
+fn next_and_jump_persist_local_instance_step() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_movable_flow(&root.join(".flows/workflow.toml"));
@@ -885,7 +919,7 @@ fn next_and_jump_persist_local_instance_state() {
     assert!(next.status.success(), "{}", String::from_utf8_lossy(&next.stderr));
     let loaded = run_cli(root, &["status", "run"]);
     assert!(loaded.status.success());
-    assert!(String::from_utf8_lossy(&loaded.stdout).contains("state: Review"));
+    assert!(String::from_utf8_lossy(&loaded.stdout).contains("step: Review"));
 
     let jump = run_cli(root, &["jump", "run", "Done"]);
     assert!(jump.status.success(), "{}", String::from_utf8_lossy(&jump.stderr));
@@ -893,7 +927,7 @@ fn next_and_jump_persist_local_instance_state() {
         fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap(),
         indoc! {r#"
             flow = "workflow"
-            state = "Done"
+            step = "Done"
 
             [autonomy]
             Design = "guided"
@@ -977,7 +1011,7 @@ fn context_values_are_limited_to_150_characters() {
 }
 
 #[test]
-fn autonomy_range_is_persisted_per_state_and_follows_moves() {
+fn autonomy_range_is_persisted_per_step_and_follows_moves() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_movable_flow(&root.join(".flows/workflow.toml"));
@@ -991,7 +1025,7 @@ fn autonomy_range_is_persisted_per_state_and_follows_moves() {
     );
     assert_eq!(
         String::from_utf8_lossy(&range.stdout),
-        format!("set autonomy to steered for states:\n  - Design\n  - Review\n{AUTONOMY_HINT}")
+        format!("set autonomy to steered for steps:\n  - Design\n  - Review\n{AUTONOMY_HINT}")
     );
     let single = run_cli(root, &["autonomy", "set", "run", "autonomous", "Review"]);
     assert!(
@@ -1002,7 +1036,7 @@ fn autonomy_range_is_persisted_per_state_and_follows_moves() {
 
     assert_eq!(
         String::from_utf8_lossy(&single.stdout),
-        format!("set autonomy to autonomous for states:\n  - Review\n{AUTONOMY_HINT}")
+        format!("set autonomy to autonomous for steps:\n  - Review\n{AUTONOMY_HINT}")
     );
     let path = root.join(".flows/instances/run.toml");
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
@@ -1011,12 +1045,12 @@ fn autonomy_range_is_persisted_per_state_and_follows_moves() {
     assert_eq!(saved["autonomy"]["Done"].as_str(), Some("guided"));
 
     let status = run_cli(root, &["status", "run"]);
-    assert!(String::from_utf8_lossy(&status.stdout).contains("current state: Design\nautonomy: steered ("));
+    assert!(String::from_utf8_lossy(&status.stdout).contains("current step: Design\nautonomy: steered ("));
     assert!(run_cli(root, &["next", "run", "Review"]).status.success());
     let status = run_cli(root, &["status", "run"]);
     let output = String::from_utf8_lossy(&status.stdout);
     assert!(
-        output.contains("current state: Review\nautonomy: autonomous ("),
+        output.contains("current step: Review\nautonomy: autonomous ("),
         "{output}"
     );
     assert!(
@@ -1026,7 +1060,7 @@ fn autonomy_range_is_persisted_per_state_and_follows_moves() {
     assert!(run_cli(root, &["jump", "run", "Done"]).status.success());
     assert!(
         String::from_utf8_lossy(&run_cli(root, &["status", "run"]).stdout)
-            .contains("current state: Done\nautonomy: guided (")
+            .contains("current step: Done\nautonomy: guided (")
     );
 }
 
@@ -1039,29 +1073,29 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
     fs::write(
         &path,
         indoc! {r#"
-        initial_state = "Start"
-        [[states]]
+        initial_step = "Start"
+        [[steps]]
         name = "End"
         next = ["After"]
-        [[states]]
+        [[steps]]
         name = "Right"
         next = ["End"]
-        [[states]]
+        [[steps]]
         name = "Start"
         next = ["Left", "Right", "Dead End"]
-        [[states]]
+        [[steps]]
         name = "Dead End"
         next = ["Dead End"]
-        [[states]]
+        [[steps]]
         name = "Loop"
         next = ["Left"]
-        [[states]]
+        [[steps]]
         name = "After"
         next = ["End"]
-        [[states]]
+        [[steps]]
         name = "Left"
         next = ["Loop", "End"]
-        [[states]]
+        [[steps]]
         name = "Unrelated"
     "#},
     )
@@ -1077,7 +1111,7 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
     assert_eq!(
         String::from_utf8_lossy(&range.stdout),
         format!(
-            "set autonomy to steered for states:\n  - End\n  - Right\n  - Start\n  - Loop\n  - Left\n{AUTONOMY_HINT}"
+            "set autonomy to steered for steps:\n  - End\n  - Right\n  - Start\n  - Loop\n  - Left\n{AUTONOMY_HINT}"
         )
     );
     let saved: toml::Value =
@@ -1092,7 +1126,7 @@ fn autonomy_range_includes_all_routes_and_loops_before_end_but_stops_at_end() {
     let same = run_cli(root, &["autonomy", "set", "run", "autonomous", "End", "End"]);
     assert_eq!(
         String::from_utf8_lossy(&same.stdout),
-        format!("set autonomy to autonomous for states:\n  - End\n{AUTONOMY_HINT}")
+        format!("set autonomy to autonomous for steps:\n  - End\n{AUTONOMY_HINT}")
     );
     let original = fs::read_to_string(root.join(".flows/instances/run.toml")).unwrap();
     let unreachable = run_cli(root, &["autonomy", "set", "run", "steered", "Start", "Unrelated"]);
@@ -1120,11 +1154,11 @@ fn autonomy_rejects_invalid_ranges_without_changing_instance() {
         ),
         (
             vec!["autonomy", "set", "run", "steered", "Missing"],
-            "unknown state",
+            "unknown step",
         ),
         (
             vec!["autonomy", "set", "run", "steered", "Design", "Missing"],
-            "unknown state",
+            "unknown step",
         ),
         (
             vec!["autonomy", "set", "run", "unsupervised", "Design"],
@@ -1139,14 +1173,14 @@ fn autonomy_rejects_invalid_ranges_without_changing_instance() {
 }
 
 #[test]
-fn autonomy_updates_global_instance_and_handles_state_names_with_spaces() {
+fn autonomy_updates_global_instance_and_handles_step_names_with_spaces() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let flow = root.join("global/flows/workflow.toml");
     fs::create_dir_all(flow.parent().unwrap()).unwrap();
     fs::write(
         &flow,
-        "initial_state = 'In Progress'\n[[states]]\nname = 'In Progress'\n[[states]]\nname = 'Done'\n",
+        "initial_step = 'In Progress'\n[[steps]]\nname = 'In Progress'\n[[steps]]\nname = 'Done'\n",
     )
     .unwrap();
     assert!(
@@ -1163,18 +1197,18 @@ fn autonomy_updates_global_instance_and_handles_state_names_with_spaces() {
     assert_eq!(document["autonomy"]["In Progress"].as_str(), Some("steered"));
     assert!(
         String::from_utf8_lossy(&run_cli(root, &["status", "run"]).stdout)
-            .contains("current state: In Progress\nautonomy: steered (")
+            .contains("current step: In Progress\nautonomy: steered (")
     );
 }
 
 #[test]
-fn legacy_instances_gain_guided_autonomy_for_every_state() {
+fn legacy_instances_gain_guided_autonomy_for_every_step() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_movable_flow(&root.join(".flows/workflow.toml"));
     let path = root.join(".flows/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n").unwrap();
+    fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
 
     let status = run_cli(root, &["status", "run"]);
     assert!(status.status.success());
@@ -1242,7 +1276,7 @@ fn rejected_moves_leave_instance_file_unchanged() {
     assert!(String::from_utf8_lossy(&next.stderr).contains("cannot move next"));
     let jump = run_cli(root, &["jump", "run", "Missing"]);
     assert!(!jump.status.success());
-    assert!(String::from_utf8_lossy(&jump.stderr).contains("unknown state"));
+    assert!(String::from_utf8_lossy(&jump.stderr).contains("unknown step"));
     assert_eq!(fs::read_to_string(path).unwrap(), original);
 }
 
@@ -1263,7 +1297,7 @@ fn movement_updates_global_instance_without_creating_a_local_one() {
     assert!(
         fs::read_to_string(root.join("global/flows/instances/run.toml"))
             .unwrap()
-            .contains("state = \"Review\"")
+            .contains("step = \"Review\"")
     );
 }
 
@@ -1351,7 +1385,7 @@ fn new_global_creates_instance_with_global_flow() {
         fs::read_to_string(root.join("global/flows/instances/run.toml")).unwrap(),
         indoc! {r#"
             flow = "workflow"
-            state = "Design"
+            step = "Design"
 
             [autonomy]
             Design = "guided"
@@ -1364,7 +1398,7 @@ fn new_global_creates_instance_with_global_flow() {
         "{}",
         String::from_utf8_lossy(&loaded.stderr)
     );
-    assert!(String::from_utf8_lossy(&loaded.stdout).contains("state: Design"));
+    assert!(String::from_utf8_lossy(&loaded.stdout).contains("step: Design"));
 }
 
 #[test]
@@ -1401,8 +1435,8 @@ fn new_copy_flow_keeps_existing_global_flow() {
     let global_flow = root.join("global/flows/workflow.toml");
     fs::create_dir_all(global_flow.parent().unwrap()).unwrap();
     let existing = indoc! {r#"
-        initial_state = "Review"
-        [[states]]
+        initial_step = "Review"
+        [[steps]]
         name = "Review"
         next = []
     "#};
@@ -1502,18 +1536,18 @@ fn ownership_can_be_claimed_released_and_stopped() {
 }
 
 #[test]
-fn complete_deletes_an_instance_only_at_a_terminal_state() {
+fn complete_deletes_an_instance_only_at_a_terminal_step() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_local_flow(root);
     let path = root.join(".flows/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n").unwrap();
+    fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
 
     let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
     assert!(
         status.contains(
-            "Next states:\n  This is the final state. Run `flows complete run` to complete the flow."
+            "Next steps:\n  This is the final step. Run `flows complete run` to complete the flow."
         ),
         "{status}"
     );
@@ -1528,17 +1562,17 @@ fn complete_deletes_an_instance_only_at_a_terminal_state() {
 }
 
 #[test]
-fn complete_preserves_an_instance_with_available_next_states() {
+fn complete_preserves_an_instance_with_available_next_steps() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     write_movable_flow(&root.join(".flows/workflow.toml"));
     let path = root.join(".flows/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n").unwrap();
+    fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
 
     let completed = run_cli(root, &["complete", "run"]);
     assert!(!completed.status.success());
-    assert!(String::from_utf8_lossy(&completed.stderr).contains("state has next transitions"));
+    assert!(String::from_utf8_lossy(&completed.stderr).contains("step has next transitions"));
     assert!(path.exists());
 }
 
@@ -1548,7 +1582,7 @@ fn stop_can_delete_an_instance_when_its_flow_is_missing() {
     let root = directory.path();
     let path = root.join(".flows/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "flow = 'missing'\nstate = 'Unknown'\n").unwrap();
+    fs::write(&path, "flow = 'missing'\nstep = 'Unknown'\n").unwrap();
 
     let stopped = run_cli(root, &["stop", "run"]);
     assert!(
@@ -1583,18 +1617,18 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
     fs::write(
         &flow,
         indoc! {r#"
-        initial_state = "Start"
+        initial_step = "Start"
         use_global = false
-        [[states]]
+        [[steps]]
         name = "Start"
         next = ["A", "B", "Finish"]
-        [[states]]
+        [[steps]]
         name = "A"
         next = ["B", "Finish"]
-        [[states]]
+        [[steps]]
         name = "B"
         next = ["Finish", "A"]
-        [[states]]
+        [[steps]]
         name = "Finish"
         next = []
     "#},
@@ -1603,12 +1637,12 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
     let path = root.join(".flows/instances/run.toml");
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        !fs::read_to_string(&path).unwrap().contains("[state_overrides]"),
+        !fs::read_to_string(&path).unwrap().contains("[step_overrides]"),
         "empty overrides should not be serialized"
     );
     for args in [
-        &["state-overrides", "skip", "run", "A"][..],
-        &["state-overrides", "skip", "run", "B"],
+        &["step-overrides", "skip", "run", "A"][..],
+        &["step-overrides", "skip", "run", "B"],
     ] {
         let result = run_cli(root, args);
         assert!(
@@ -1618,11 +1652,11 @@ fn instance_configuration_persists_and_controls_status_next_jump_and_complete() 
         );
     }
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(saved["state_overrides"]["skipped"].as_array().unwrap().len(), 2);
+    assert_eq!(saved["step_overrides"]["skipped"].as_array().unwrap().len(), 2);
     assert!(saved.get("skipped").is_none(), "{saved}");
     let status = run_cli(root, &["status", "run"]);
     let text = String::from_utf8_lossy(&status.stdout);
-    assert!(text.contains("Next states:\n  - Finish\n"), "{text}");
+    assert!(text.contains("Next steps:\n  - Finish\n"), "{text}");
     assert!(!run_cli(root, &["next", "run", "A"]).status.success());
     assert!(!run_cli(root, &["jump", "run", "B"]).status.success());
     assert!(run_cli(root, &["next", "run", "Finish"]).status.success());
@@ -1638,88 +1672,88 @@ fn initial_and_custom_final_are_reversible_and_failed_commands_leave_file_untouc
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     let path = root.join(".flows/instances/run.toml");
     assert!(
-        run_cli(root, &["state-overrides", "initial", "run", "Review"])
+        run_cli(root, &["step-overrides", "initial", "run", "Review"])
             .status
             .success()
     );
     let contents = fs::read_to_string(&path).unwrap();
     let saved: toml::Value = toml::from_str(&contents).unwrap();
-    assert_eq!(saved["state_overrides"]["initial"].as_str(), Some("Review"));
+    assert_eq!(saved["step_overrides"]["initial"].as_str(), Some("Review"));
     assert!(saved.get("initial").is_none(), "{contents}");
-    assert_eq!(saved["state"].as_str(), Some("Review"));
+    assert_eq!(saved["step"].as_str(), Some("Review"));
     assert!(run_cli(root, &["jump", "run", "Design"]).status.success());
     assert!(
-        run_cli(root, &["state-overrides", "initial", "run", "Review"])
+        run_cli(root, &["step-overrides", "initial", "run", "Review"])
             .status
             .success()
     );
     assert!(
-        run_cli(root, &["state-overrides", "final", "add", "run", "Review"])
+        run_cli(root, &["step-overrides", "final", "add", "run", "Review"])
             .status
             .success()
     );
     let saved: toml::Value = toml::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(
-        saved["state_overrides"]["finals"].as_array().unwrap()[0].as_str(),
+        saved["step_overrides"]["finals"].as_array().unwrap()[0].as_str(),
         Some("Review")
     );
     assert!(saved.get("finals").is_none(), "{saved}");
     let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
     assert!(
         status.contains(
-            "Next states:\n  This is the final state. Run `flows complete run` to complete the flow."
+            "Next steps:\n  This is the final step. Run `flows complete run` to complete the flow."
         ),
         "{status}"
     );
     assert!(
-        run_cli(root, &["state-overrides", "final", "remove", "run", "Review"])
+        run_cli(root, &["step-overrides", "final", "remove", "run", "Review"])
             .status
             .success()
     );
     assert!(
-        run_cli(root, &["state-overrides", "initial", "run", "Design"])
+        run_cli(root, &["step-overrides", "initial", "run", "Design"])
             .status
             .success()
     );
     let contents = fs::read_to_string(&path).unwrap();
-    assert!(!contents.contains("[state_overrides]"), "{contents}");
+    assert!(!contents.contains("[step_overrides]"), "{contents}");
     for args in [
-        &["state-overrides", "skip", "run", "Design"][..],
-        &["state-overrides", "skip", "run", "Missing"],
-        &["state-overrides", "initial", "run", "Missing"],
-        &["state-overrides", "final", "remove", "run", "Review"],
-        &["state-overrides", "unskip", "run", "Review"],
+        &["step-overrides", "skip", "run", "Design"][..],
+        &["step-overrides", "skip", "run", "Missing"],
+        &["step-overrides", "initial", "run", "Missing"],
+        &["step-overrides", "final", "remove", "run", "Review"],
+        &["step-overrides", "unskip", "run", "Review"],
     ] {
         let before = fs::read(&path).unwrap();
         assert!(!run_cli(root, args).status.success(), "{args:?}");
         assert_eq!(fs::read(&path).unwrap(), before, "{args:?}");
     }
     assert!(
-        run_cli(root, &["state-overrides", "final", "add", "run", "Review"])
+        run_cli(root, &["step-overrides", "final", "add", "run", "Review"])
             .status
             .success()
     );
     let before = fs::read(&path).unwrap();
     assert!(
-        !run_cli(root, &["state-overrides", "skip", "run", "Review"])
+        !run_cli(root, &["step-overrides", "skip", "run", "Review"])
             .status
             .success()
     );
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(
-        run_cli(root, &["state-overrides", "final", "remove", "run", "Review"])
+        run_cli(root, &["step-overrides", "final", "remove", "run", "Review"])
             .status
             .success()
     );
     let before = fs::read(&path).unwrap();
     assert!(
-        !run_cli(root, &["state-overrides", "skip", "run", "Review"])
+        !run_cli(root, &["step-overrides", "skip", "run", "Review"])
             .status
             .success()
     );
     assert_eq!(fs::read(&path).unwrap(), before);
     assert!(
-        run_cli(root, &["state-overrides", "initial", "run", "Review"])
+        run_cli(root, &["step-overrides", "initial", "run", "Review"])
             .status
             .success()
     );
@@ -1732,7 +1766,7 @@ fn custom_final_allows_completion_despite_flow_transitions() {
     write_movable_flow(&root.join(".flows/workflow.toml"));
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        run_cli(root, &["state-overrides", "final", "add", "run", "Design"])
+        run_cli(root, &["step-overrides", "final", "add", "run", "Design"])
             .status
             .success()
     );
@@ -1741,26 +1775,26 @@ fn custom_final_allows_completion_despite_flow_transitions() {
 }
 
 #[test]
-fn skipped_cycle_does_not_make_a_nonfinal_state_completable() {
+fn skipped_cycle_does_not_make_a_nonfinal_step_completable() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path();
     let flow = root.join(".flows/workflow.toml");
     fs::create_dir_all(flow.parent().unwrap()).unwrap();
     fs::write(
         &flow,
-        "initial_state = 'Start'\nuse_global = false\n[[states]]\nname = 'Start'\nnext = ['Loop']\n[[states]]\nname = 'Loop'\nnext = ['Loop']\n",
+        "initial_step = 'Start'\nuse_global = false\n[[steps]]\nname = 'Start'\nnext = ['Loop']\n[[steps]]\nname = 'Loop'\nnext = ['Loop']\n",
     )
     .unwrap();
     assert!(run_cli(root, &["start", "workflow", "run"]).status.success());
     assert!(
-        run_cli(root, &["state-overrides", "skip", "run", "Loop"])
+        run_cli(root, &["step-overrides", "skip", "run", "Loop"])
             .status
             .success()
     );
     let path = root.join(".flows/instances/run.toml");
     let before = fs::read(&path).unwrap();
     let status = String::from_utf8(run_cli(root, &["status", "run"]).stdout).unwrap();
-    assert!(!status.contains("This is the final state"), "{status}");
+    assert!(!status.contains("This is the final step"), "{status}");
     let next = run_cli(root, &["next", "run"]);
     assert!(!next.status.success());
     assert!(String::from_utf8_lossy(&next.stderr).contains("instance run has no available next transitions"));
@@ -1776,43 +1810,43 @@ fn old_instance_without_overrides_loads_and_nested_overrides_round_trip() {
     let root = directory.path();
     let flow = root.join(".flows/workflow.toml");
     fs::create_dir_all(flow.parent().unwrap()).unwrap();
-    fs::write(&flow, "initial_state = 'Design'\n[[states]]\nname = 'Design'\nnext = ['Review']\n[[states]]\nname = 'Review'\nnext = ['Done']\n[[states]]\nname = 'Done'\n").unwrap();
+    fs::write(&flow, "initial_step = 'Design'\n[[steps]]\nname = 'Design'\nnext = ['Review']\n[[steps]]\nname = 'Review'\nnext = ['Done']\n[[steps]]\nname = 'Done'\n").unwrap();
     let path = root.join(".flows/instances/run.toml");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n").unwrap();
+    fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n").unwrap();
     assert!(run_cli(root, &["status", "run"]).status.success());
     assert!(
         run_cli(root, &["resume", "run", "--owner", "operator"])
             .status
             .success()
     );
-    assert!(!fs::read_to_string(&path).unwrap().contains("[state_overrides]"));
-    fs::write(&path, "flow = 'workflow'\nstate = 'Design'\n[state_overrides]\ninitial = 'Done'\nfinals = ['Design']\nskipped = ['Review']\n").unwrap();
+    assert!(!fs::read_to_string(&path).unwrap().contains("[step_overrides]"));
+    fs::write(&path, "flow = 'workflow'\nstep = 'Design'\n[step_overrides]\ninitial = 'Done'\nfinals = ['Design']\nskipped = ['Review']\n").unwrap();
     assert!(run_cli(root, &["status", "run"]).status.success());
     assert!(
-        run_cli(root, &["state-overrides", "initial", "run", "Done"])
+        run_cli(root, &["step-overrides", "initial", "run", "Done"])
             .status
             .success()
     );
     let contents = fs::read_to_string(&path).unwrap();
     let saved: toml::Value = toml::from_str(&contents).unwrap();
     assert_eq!(
-        saved["state_overrides"]["skipped"].as_array().unwrap()[0].as_str(),
+        saved["step_overrides"]["skipped"].as_array().unwrap()[0].as_str(),
         Some("Review")
     );
     assert!(
-        run_cli(root, &["state-overrides", "unskip", "run", "Review"])
+        run_cli(root, &["step-overrides", "unskip", "run", "Review"])
             .status
             .success()
     );
     let contents = fs::read_to_string(&path).unwrap();
     let saved: toml::Value = toml::from_str(&contents).unwrap();
-    assert_eq!(saved["state_overrides"]["initial"].as_str(), Some("Done"));
+    assert_eq!(saved["step_overrides"]["initial"].as_str(), Some("Done"));
     assert_eq!(
-        saved["state_overrides"]["finals"].as_array().unwrap()[0].as_str(),
+        saved["step_overrides"]["finals"].as_array().unwrap()[0].as_str(),
         Some("Design")
     );
-    assert!(saved["state_overrides"].get("skipped").is_none(), "{contents}");
+    assert!(saved["step_overrides"].get("skipped").is_none(), "{contents}");
     assert!(
         saved.get("initial").is_none() && saved.get("finals").is_none(),
         "{contents}"
@@ -1836,14 +1870,14 @@ fn invalid_persisted_instance_configuration_is_rejected_on_load() {
     ] {
         fs::write(
             &path,
-            format!("flow = 'workflow'\nstate = 'Design'\n[state_overrides]\n{extra}"),
+            format!("flow = 'workflow'\nstep = 'Design'\n[step_overrides]\n{extra}"),
         )
         .unwrap();
         let output = run_cli(root, &["status", "run"]);
         assert!(!output.status.success(), "{extra}");
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            format!("flow = 'workflow'\nstate = 'Design'\n[state_overrides]\n{extra}")
+            format!("flow = 'workflow'\nstep = 'Design'\n[step_overrides]\n{extra}")
         );
     }
 }

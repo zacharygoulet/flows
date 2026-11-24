@@ -1,24 +1,28 @@
 The `flows` tool helps AI agents follow configured, deterministic flows. It tracks
 progress; the agent does the work.
 
-A flow describes states, their guidance, and normal next transitions. Start an
+A flow describes steps, their guidance, and normal next transitions. Start an
 instance from a flow, use status to read its current guidance, move with next,
-or use jump for exceptional moves. Use 'flows state-overrides' for optional
-instance-specific initial, final, and skipped states.
+or use jump for exceptional moves. Use 'flows step-overrides' for optional
+instance-specific initial, final, and skipped steps.
 
-Instances can be assigned autonomy level per state, per-instance context, and an
+Guidance at global, flow, and step levels can include a checklist of instructions.
+Checklist items are not individually tracked. Use 'flows list steps <flow-name>'
+to list a flow's steps.
+
+Instances can be assigned autonomy level per step, per-instance context, and an
 optional informational owner. Ownership does not block operations.
 
-Context is a persistent set of compact reminders or pointers for later states, such as
+Context is a persistent set of compact reminders or pointers for later steps, such as
 an issue ID or plan URL. Values are limited to 150 characters; keep detailed plans,
 requirements, and notes in their proper documents instead.
 
-Each [[states]] entry can set autonomy = "guided", "steered", or "autonomous";
-omitted values default to guided. Guided autonomy confirms state boundaries
+Each [[steps]] entry can set autonomy = "guided", "steered", or "autonomous";
+omitted values default to guided. Guided autonomy confirms step boundaries
 and each emerging design choice. Steered autonomy proceeds with routine work and
 asks on consequential choices. Autonomous autonomy works independently
 and escalates fundamental blockers or reserved decisions.
-New instances save these defaults per state. Loading older instances fills only
+New instances save these defaults per step. Loading older instances fills only
 missing autonomy entries from the flow defaults; saved values are preserved even
 if the flow defaults change. Override saved levels with 'flows autonomy set'.
 

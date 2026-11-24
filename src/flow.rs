@@ -18,14 +18,14 @@ use serde::{Deserialize, Serialize};
 pub struct Flow {
     #[serde(skip, default = "FlowName::placeholder")]
     name: FlowName,
-    initial_state: StateName,
-    states: Vec<State>,
+    initial_step: StepName,
+    steps: Vec<Step>,
     #[serde(default)]
     summary: Option<String>,
     #[serde(default)]
     details: Option<String>,
     #[serde(default)]
-    steps: Vec<String>,
+    checklist: Vec<String>,
     #[serde(default = "default_use_global")]
     use_global: bool,
 }
@@ -35,32 +35,33 @@ fn default_use_global() -> bool {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct State {
+#[serde(deny_unknown_fields)]
+pub struct Step {
     pub name: String,
     #[serde(default)]
     pub autonomy: Autonomy,
     #[serde(default)]
-    pub next: Vec<StateName>,
+    pub next: Vec<StepName>,
     #[serde(default)]
     pub summary: Option<String>,
     #[serde(default)]
     pub details: Option<String>,
     #[serde(default)]
-    pub steps: Vec<String>,
+    pub checklist: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct StateName(pub String);
+pub struct StepName(pub String);
 
 impl Flow {
-    pub fn new(name: FlowName, initial_state: StateName, states: Vec<State>) -> Self {
+    pub fn new(name: FlowName, initial_step: StepName, steps: Vec<Step>) -> Self {
         let flow = Self {
             name,
-            initial_state,
-            states,
+            initial_step,
+            steps,
             summary: None,
             details: None,
-            steps: Vec::new(),
+            checklist: Vec::new(),
             use_global: true,
         };
         flow.validate_at(None);
@@ -80,26 +81,26 @@ impl Flow {
             Some(path) => raise::raise(format!("validating {}: {message}", path.display())),
             None => raise::raise(message),
         };
-        let mut all_state_names = HashSet::new();
-        for state in &self.states {
-            if state.name.trim().is_empty() {
-                raise_validation_error("state names cannot be empty".to_owned());
+        let mut all_step_names = HashSet::new();
+        for step in &self.steps {
+            if step.name.trim().is_empty() {
+                raise_validation_error("step names cannot be empty".to_owned());
             }
-            if !all_state_names.insert(state.name.as_str()) {
-                raise_validation_error(format!("duplicate state: {}", state.name));
+            if !all_step_names.insert(step.name.as_str()) {
+                raise_validation_error(format!("duplicate step: {}", step.name));
             }
         }
 
-        if !all_state_names.contains(self.initial_state.0.as_str()) {
-            raise_validation_error(format!("unknown initial state: {}", self.initial_state.0));
+        if !all_step_names.contains(self.initial_step.0.as_str()) {
+            raise_validation_error(format!("unknown initial step: {}", self.initial_step.0));
         }
 
-        for state in &self.states {
-            for next in &state.next {
-                if !all_state_names.contains(next.0.as_str()) {
+        for step in &self.steps {
+            for next in &step.next {
+                if !all_step_names.contains(next.0.as_str()) {
                     raise_validation_error(format!(
-                        "state {} points to unknown next state {}",
-                        state.name, next.0
+                        "step {} points to unknown next step {}",
+                        step.name, next.0
                     ));
                 }
             }
@@ -168,7 +169,7 @@ mod tests {
 
     use indoc::indoc;
 
-    use super::{Flow, State, StateName};
+    use super::{Flow, Step, StepName};
     use crate::FlowName;
     use rust_utils::raise::catch_raised;
 
@@ -178,68 +179,79 @@ mod tests {
             .to_string()
     }
 
-    fn state(name: &str, next: Vec<StateName>) -> State {
-        State {
+    fn step(name: &str, next: Vec<StepName>) -> Step {
+        Step {
             name: name.to_owned(),
             autonomy: Default::default(),
             next,
             summary: None,
             details: None,
-            steps: Vec::new(),
+            checklist: Vec::new(),
         }
     }
 
-    fn flow(initial_state: &str, states: Vec<State>) -> Flow {
+    fn flow(initial_step: &str, steps: Vec<Step>) -> Flow {
         Flow {
             name: FlowName::parse("example").unwrap(),
-            initial_state: StateName(initial_state.to_owned()),
-            states,
+            initial_step: StepName(initial_step.to_owned()),
+            steps,
             summary: None,
             details: None,
-            steps: Vec::new(),
+            checklist: Vec::new(),
             use_global: true,
         }
     }
 
     #[test]
     fn missing_next_defaults_to_no_transitions() {
-        let flow: Flow = toml::from_str("initial_state = \"Done\"\n\n[[states]]\nname = \"Done\"\n").unwrap();
+        let flow: Flow = toml::from_str("initial_step = \"Done\"\n\n[[steps]]\nname = \"Done\"\n").unwrap();
         flow.validate();
-        assert!(flow.states()[0].next.is_empty());
+        assert!(flow.steps()[0].next.is_empty());
         assert!(*flow.use_global());
     }
 
     #[test]
     fn can_opt_out_of_global_guidance() {
         let flow: Flow =
-            toml::from_str("use_global = false\ninitial_state = 'Done'\n[[states]]\nname = 'Done'\n")
-                .unwrap();
+            toml::from_str("use_global = false\ninitial_step = 'Done'\n[[steps]]\nname = 'Done'\n").unwrap();
         assert!(!flow.use_global());
     }
 
     #[test]
-    fn rejects_empty_state_names() {
-        let flow = flow(" ", vec![state(" ", vec![])]);
-        assert!(raised_message(|| flow.validate()).contains("state names cannot be empty"));
+    fn rejects_legacy_schema_keys() {
+        for contents in [
+            "initial_state = 'Done'\n[[states]]\nname = 'Done'\n",
+            "initial_step = 'Done'\n[[states]]\nname = 'Done'\n",
+            "initial_step = 'Done'\nsteps = ['Old flow guidance']\n",
+            "initial_step = 'Done'\n[[steps]]\nname = 'Done'\nsteps = ['Old step guidance']\n",
+        ] {
+            assert!(toml::from_str::<Flow>(contents).is_err(), "{contents}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty_step_names() {
+        let flow = flow(" ", vec![step(" ", vec![])]);
+        assert!(raised_message(|| flow.validate()).contains("step names cannot be empty"));
     }
 
     #[test]
     fn rejects_duplicate_names() {
-        let flow = flow("draft", vec![state("draft", vec![]), state("draft", vec![])]);
-        assert!(raised_message(|| flow.validate()).contains("duplicate state"));
+        let flow = flow("draft", vec![step("draft", vec![]), step("draft", vec![])]);
+        assert!(raised_message(|| flow.validate()).contains("duplicate step"));
     }
 
     #[test]
-    fn rejects_unknown_next_state() {
-        let flow = flow("draft", vec![state("draft", vec![StateName("missing".into())])]);
-        assert!(raised_message(|| flow.validate()).contains("unknown next state"));
+    fn rejects_unknown_next_step() {
+        let flow = flow("draft", vec![step("draft", vec![StepName("missing".into())])]);
+        assert!(raised_message(|| flow.validate()).contains("unknown next step"));
     }
 
     #[test]
-    fn rejects_unknown_initial_state() {
-        let flow = flow("Missing", vec![state("Design", vec![])]);
+    fn rejects_unknown_initial_step() {
+        let flow = flow("Missing", vec![step("Design", vec![])]);
 
-        assert!(raised_message(|| flow.validate()).contains("unknown initial state"));
+        assert!(raised_message(|| flow.validate()).contains("unknown initial step"));
     }
 
     #[test]
@@ -249,9 +261,9 @@ mod tests {
         fs::write(
             &path,
             indoc! {r#"
-                initial_state = "Design"
+                initial_step = "Design"
                 name = "other"
-                [[states]]
+                [[steps]]
                 name = "Design"
                 next = []
             "#},

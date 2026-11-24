@@ -7,7 +7,7 @@ use crate::{Autonomy, Flow, FlowName, GlobalGuidance, Instance};
 
 pub struct InstancesTable<'a>(pub &'a [Instance]);
 pub struct FlowsTable<'a>(pub &'a [Flow]);
-pub struct StatesTable<'a>(pub &'a Flow);
+pub struct StepsTable<'a>(pub &'a Flow);
 
 impl fmt::Display for InstancesTable<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -36,12 +36,12 @@ impl fmt::Display for InstancesTable<'_> {
             .max("OWNER".len());
         writeln!(
             formatter,
-            "{:<instance_width$}  {:<flow_width$}  {:<owner_width$}  STATE",
+            "{:<instance_width$}  {:<flow_width$}  {:<owner_width$}  STEP",
             "INSTANCE", "FLOW", "OWNER"
         )?;
         writeln!(
             formatter,
-            "{}  {}  {}  -----",
+            "{}  {}  {}  ----",
             "-".repeat(instance_width),
             "-".repeat(flow_width),
             "-".repeat(owner_width)
@@ -53,7 +53,7 @@ impl fmt::Display for InstancesTable<'_> {
                 instance.name(),
                 instance.flow().name(),
                 instance.owner().as_deref().unwrap_or("unowned"),
-                instance.state().0
+                instance.step().0
             )?;
         }
         Ok(())
@@ -75,15 +75,15 @@ impl fmt::Display for FlowsTable<'_> {
     }
 }
 
-impl fmt::Display for StatesTable<'_> {
+impl fmt::Display for StepsTable<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_list_table(
             formatter,
-            "STATE",
+            "STEP",
             self.0
-                .states()
+                .steps()
                 .iter()
-                .map(|state| (state.name.as_str(), state.summary.as_deref().unwrap_or(""))),
+                .map(|step| (step.name.as_str(), step.summary.as_deref().unwrap_or(""))),
         )
     }
 }
@@ -122,14 +122,14 @@ pub fn created_flow(name: &FlowName, path: &Path) -> String {
 
 pub fn moved_instance(instance: &Instance) -> String {
     format!(
-        "instance {} is now in state {}",
+        "instance {} is now in step {}",
         instance.name(),
-        instance.state().0
+        instance.step().0
     )
 }
 
 pub fn autonomy_changed(level: Autonomy, changed: &[String]) -> String {
-    let mut message = format!("set autonomy to {level} for states:\n");
+    let mut message = format!("set autonomy to {level} for steps:\n");
     for name in changed {
         writeln!(message, "  - {name}").expect("writing to a String cannot fail");
     }
@@ -138,7 +138,7 @@ pub fn autonomy_changed(level: Autonomy, changed: &[String]) -> String {
 }
 
 pub struct InstanceStatus<'a>(pub &'a Instance);
-pub struct StatePreview<'a>(pub &'a Instance, pub &'a str);
+pub struct StepPreview<'a>(pub &'a Instance, pub &'a str);
 
 impl fmt::Display for InstanceStatus<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -146,7 +146,7 @@ impl fmt::Display for InstanceStatus<'_> {
     }
 }
 
-impl fmt::Display for StatePreview<'_> {
+impl fmt::Display for StepPreview<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_status(formatter, self.0, Some(self.1))
     }
@@ -159,16 +159,16 @@ fn write_status(
 ) -> fmt::Result {
     let flow = instance.flow();
     let current = flow
-        .states()
+        .steps()
         .iter()
-        .find(|state| state.name == instance.state().0)
-        .expect("the instance state was validated when it was loaded");
-    let state = preview
+        .find(|step| step.name == instance.step().0)
+        .expect("the instance step was validated when it was loaded");
+    let step = preview
         .map(|name| {
-            flow.states()
+            flow.steps()
                 .iter()
-                .find(|state| state.name == name)
-                .expect("preview state was validated")
+                .find(|step| step.name == name)
+                .expect("preview step was validated")
         })
         .unwrap_or(current);
 
@@ -176,7 +176,7 @@ fn write_status(
         formatter,
         "{}",
         if preview.is_some() {
-            "State Preview"
+            "Step Preview"
         } else {
             "Instance Status"
         }
@@ -185,19 +185,14 @@ fn write_status(
     write_summary_line(formatter, "flow", flow.name().as_str(), flow.summary().as_deref())?;
     write_summary_line(
         formatter,
-        "current state",
+        "current step",
         &current.name,
         current.summary.as_deref(),
     )?;
     if preview.is_some() {
-        write_summary_line(
-            formatter,
-            "inspected state",
-            &state.name,
-            state.summary.as_deref(),
-        )?;
+        write_summary_line(formatter, "inspected step", &step.name, step.summary.as_deref())?;
     }
-    let autonomy = instance.autonomy_for(&state.name);
+    let autonomy = instance.autonomy_for(&step.name);
     writeln!(
         formatter,
         "autonomy: {autonomy} ({})",
@@ -220,29 +215,29 @@ fn write_status(
         write_section(formatter, "Global details", guidance.details().as_deref())?;
     }
     write_section(formatter, "Flow details", flow.details().as_deref())?;
-    write_section(formatter, "State details", state.details.as_deref())?;
+    write_section(formatter, "Step details", step.details.as_deref())?;
     if let Some(guidance) = &global_guidance {
-        write_steps_section(formatter, "Global steps", guidance.steps())?;
+        write_checklist_section(formatter, "Global checklist", guidance.checklist())?;
     }
-    write_steps_section(formatter, "Flow steps", flow.steps())?;
-    write_steps_section(formatter, "State steps", &state.steps)?;
+    write_checklist_section(formatter, "Flow checklist", flow.checklist())?;
+    write_checklist_section(formatter, "Step checklist", &step.checklist)?;
 
-    let next_states = instance.effective_next_for(&state.name);
-    if !next_states.is_empty() {
+    let next_steps = instance.effective_next_for(&step.name);
+    if !next_steps.is_empty() {
         writeln!(formatter)?;
-        writeln!(formatter, "Next states:")?;
-        for next in next_states {
+        writeln!(formatter, "Next steps:")?;
+        for next in next_steps {
             match next.summary.as_deref() {
                 Some(summary) => writeln!(formatter, "  - {}: {summary}", next.name)?,
                 None => writeln!(formatter, "  - {}", next.name)?,
             }
         }
-    } else if state.name == current.name && instance.is_final(&state.name) {
+    } else if step.name == current.name && instance.is_final(&step.name) {
         writeln!(formatter)?;
-        writeln!(formatter, "Next states:")?;
+        writeln!(formatter, "Next steps:")?;
         writeln!(
             formatter,
-            "  This is the final state. Run `flows complete {}` to complete the flow.",
+            "  This is the final step. Run `flows complete {}` to complete the flow.",
             instance.name()
         )?;
     }
@@ -263,7 +258,7 @@ fn write_summary_line(
 
 fn autonomy_description(autonomy: Autonomy) -> &'static str {
     match autonomy {
-        Autonomy::Guided => "Confirm state boundaries and each emerging design choice.",
+        Autonomy::Guided => "Confirm step boundaries and each emerging design choice.",
         Autonomy::Steered => "Proceed with routine work; ask on consequential choices.",
         Autonomy::Autonomous => "Work independently; escalate fundamental blockers or reserved decisions.",
     }
@@ -278,14 +273,18 @@ fn write_section(formatter: &mut fmt::Formatter<'_>, label: &str, value: Option<
     writeln!(formatter, "{}", value.trim_end_matches('\n'))
 }
 
-fn write_steps_section(formatter: &mut fmt::Formatter<'_>, label: &str, steps: &[String]) -> fmt::Result {
-    if steps.is_empty() {
+fn write_checklist_section(
+    formatter: &mut fmt::Formatter<'_>,
+    label: &str,
+    checklist: &[String],
+) -> fmt::Result {
+    if checklist.is_empty() {
         return Ok(());
     }
     writeln!(formatter)?;
     writeln!(formatter, "{label}:")?;
-    for step in steps {
-        writeln!(formatter, "- {step}")?;
+    for item in checklist {
+        writeln!(formatter, "- {item}")?;
     }
     Ok(())
 }
